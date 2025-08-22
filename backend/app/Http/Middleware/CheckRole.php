@@ -4,8 +4,9 @@ namespace App\Http\Middleware;
 
 use Closure;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 
-class CheckRole
+class CheckRoleOptimized
 {
     /**
      * Handle an incoming request.
@@ -15,7 +16,17 @@ class CheckRole
     {
         $user = $request->user();
 
-        if (!$user || !$user->role || $user->role->name !== $role) {
+        if (!$user) {
+            return response()->json(['message' => 'Forbidden: not authenticated'], 403);
+        }
+
+        // Cache the role name per user to avoid repeated DB queries
+        $userRoleName = Cache::remember("user:role:{$user->id}", now()->addMinutes(5), function () use ($user) {
+            // If the role relation is defined, eager-load
+            return $user->role ? $user->role->name : null;
+        });
+
+        if ($userRoleName !== $role) {
             return response()->json(['message' => 'Forbidden: insufficient role'], 403);
         }
 

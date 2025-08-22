@@ -5,6 +5,8 @@ namespace App\Providers;
 use Illuminate\Support\ServiceProvider;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use App\Models\User;
 
 class AppServiceProvider extends ServiceProvider
@@ -14,7 +16,8 @@ class AppServiceProvider extends ServiceProvider
      */
     public function register(): void
     {
-        //
+        $this->app->singleton('verify.recaptcha', \App\Http\Middleware\VerifyRecaptcha::class);
+        $this->app->singleton('verify.api', \App\Http\Middleware\VerifyApiRequest::class);
     }
 
     /**
@@ -26,7 +29,6 @@ class AppServiceProvider extends ServiceProvider
         Schema::defaultStringLength(191);
 
         // Optional: globally map the authentication email field
-        // so Laravel recognizes 'user_email' instead of 'email'
         User::saving(function ($user) {
             if (isset($user->user_email)) {
                 $user->email = $user->user_email;
@@ -39,5 +41,15 @@ class AppServiceProvider extends ServiceProvider
                 $user->password_hash = Hash::make($user->password_hash);
             }
         });
+
+        // 🚀 Debug queries in local only
+        if ($this->app->environment('local')) {
+            DB::listen(function ($query) {
+                Log::info("SQL: {$query->sql}", [
+                    'bindings' => $query->bindings,
+                    'time'     => $query->time
+                ]);
+            });
+        }
     }
 }

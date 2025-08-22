@@ -4,42 +4,54 @@ namespace App\Http\Middleware;
 
 use Closure;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\RateLimiter;
 
 class VerifyApiRequest
 {
     public function handle(Request $request, Closure $next)
     {
-        // 1. Ensure request is JSON
-        if (!$request->isJson()) {
-            return response()->json(['message' => 'Invalid request type'], 400);
-        }
+        $user = $request->user();
 
-        // 2. Rate limiting per IP
-        $key = 'api-request:' . $request->ip();
-        if (RateLimiter::tooManyAttempts($key, 10)) { // 10 requests per minute
+        // =============================
+        // Step 1: Determine cache key
+        // =============================
+        // If user authenticated, use user id; otherwise fallback to IP
+        $cacheKey = $user
+            ? "api-request:user:{$user->id}"
+            : "api-request:ip:{$request->ip()}";
+
+        // =============================
+        // Step 2: Rate limiting
+        // =============================
+        $maxAttempts = 100; // max requests
+        $decaySeconds = 10; // per X seconds
+
+        // Use Laravel RateLimiter to track requests
+        if (RateLimiter::tooManyAttempts($cacheKey, $maxAttempts)) {
             return response()->json(['message' => 'Too many requests'], 429);
         }
-        RateLimiter::hit($key, 60); // 60 seconds decay
+        RateLimiter::hit($cacheKey, $decaySeconds);
 
-        // 3. Verify reCAPTCHA token
-        $token = $request->header('recaptcha-token'); // or $request->input('recaptcha_token')
-        if (!$token) {
-            return response()->json(['message' => 'Missing reCAPTCHA token'], 403);
+        // =============================
+        // Step 3: Optional: track request count in cache (avoid DB N+1)
+        // =============================
+        $requestCount = Cache::remember($cacheKey, $decaySeconds, function () {
+            return 0;
+        });
+        $requestCount++;
+        Cache::put($cacheKey, $requestCount, $decaySeconds);
+
+        // =============================
+        // Step 4: Merge info into request
+        // =============================
+        if ($user) {
+            $request->merge([
+                'auth_user' => $user,
+                'api_request_count' => $requestCount,
+            ]);
         }
 
-        $response = Http::asForm()->post('https://www.google.com/recaptcha/api/siteverify', [
-            'secret' => env('NOCAPTCHA_SECRET'),
-            'response' => $token
-        ]);
-
-        $body = $response->json();
-        if (!($body['success'] ?? false) || ($body['score'] ?? 0) < 0.5) {
-            return response()->json(['message' => 'reCAPTCHA verification failed'], 403);
-        }
-
-        // 4. Passed all checks
         return $next($request);
     }
 }

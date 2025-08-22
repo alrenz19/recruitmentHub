@@ -12,11 +12,12 @@ class AuthController extends Controller
     {
         $request->validate([
             'user_email' => 'required|email',
-            'password' => 'required|string',
+            'password'   => 'required|string',
         ]);
 
-        // Fetch user with Eloquent
-        $user = User::where('user_email', $request->user_email)
+        // Fetch user with eager-loaded relations
+        $user = User::with(['hrStaff', 'applicant'])
+                    ->where('user_email', $request->user_email)
                     ->where('is_removed', 0)
                     ->first();
 
@@ -32,17 +33,19 @@ class AuthController extends Controller
         return response()->json([
             'message' => 'Login successful',
             'user' => [
-                'id' => $user->id,
-                'role_id' => $user->role_id,
-            ]
+                'id'        => $user->id,
+                'role_id'   => $user->role_id,
+                'full_name' => $user->full_name, // comes from accessor
+            ],
+            'token' => $token
         ])->cookie(
-            'auth_token',    // Cookie name
-            $token,          // Token value
-            60*24,           // Expiration in minutes (1 day)
-            '/',             // Path
-            null,            // Domain
-            true,            // Secure (HTTPS only)
-            true             // HttpOnly (JS cannot read)
+            'auth_token', // Cookie name
+            $token,       // Token value
+            60*24,        // Expiration in minutes (1 day)
+            '/',          // Path
+            null,         // Domain
+            true,         // Secure (HTTPS only) 
+            true          // HttpOnly
         );
     }
 

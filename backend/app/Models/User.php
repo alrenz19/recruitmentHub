@@ -1,8 +1,8 @@
 <?php
 namespace App\Models;
+
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
-use Illuminate\Support\Str;
 use Laravel\Sanctum\HasApiTokens;
 
 class User extends Authenticatable
@@ -22,6 +22,9 @@ class User extends Authenticatable
     protected $hidden = [
         'password_hash', 'remember_token',
     ];
+
+    // Always include full_name in API responses
+    protected $appends = ['full_name'];
 
     const CREATED_AT = 'created_at';
     const UPDATED_AT = null;
@@ -64,5 +67,19 @@ class User extends Authenticatable
     public function applicant()
     {
         return $this->hasOne(Applicant::class, 'user_id', 'id')->where('removed', 0);
+    }
+
+    // 👇 Custom accessor for full_name
+    public function getFullNameAttribute()
+    {
+        if ($this->hrStaff) {
+            return $this->hrStaff->full_name;
+        }
+
+        if ($this->applicant) {
+            return $this->applicant->full_name;
+        }
+
+        return null;
     }
 }

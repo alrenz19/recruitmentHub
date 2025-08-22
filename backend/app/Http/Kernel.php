@@ -35,5 +35,6 @@ class Kernel extends HttpKernel
         // <-- add your middleware here
         'verify.api' => \App\Http\Middleware\VerifyApiRequest::class,
         'role' => \App\Http\Middleware\CheckRole::class,
+        'verify.recaptcha' => \App\Http\Middleware\VerifyRecaptcha::class,
     ];
 }
