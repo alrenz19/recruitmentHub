@@ -13,38 +13,34 @@ class VerifyApiRequest
     {
         $user = $request->user();
 
-        // =============================
-        // Step 1: Determine cache key
-        // =============================
-        // If user authenticated, use user id; otherwise fallback to IP
+        // ================================
+        // Step 1: Determine cache key safely
+        // ================================
         $cacheKey = $user
             ? "api-request:user:{$user->id}"
             : "api-request:ip:{$request->ip()}";
 
-        // =============================
+        // ================================
         // Step 2: Rate limiting
-        // =============================
+        // ================================
         $maxAttempts = 100; // max requests
         $decaySeconds = 10; // per X seconds
 
-        // Use Laravel RateLimiter to track requests
         if (RateLimiter::tooManyAttempts($cacheKey, $maxAttempts)) {
             return response()->json(['message' => 'Too many requests'], 429);
         }
         RateLimiter::hit($cacheKey, $decaySeconds);
 
-        // =============================
-        // Step 3: Optional: track request count in cache (avoid DB N+1)
-        // =============================
-        $requestCount = Cache::remember($cacheKey, $decaySeconds, function () {
-            return 0;
-        });
+        // ================================
+        // Step 3: Track request count in cache
+        // ================================
+        $requestCount = Cache::get($cacheKey, 0);
         $requestCount++;
         Cache::put($cacheKey, $requestCount, $decaySeconds);
 
-        // =============================
-        // Step 4: Merge info into request
-        // =============================
+        // ================================
+        // Step 4: Merge info safely into request
+        // ================================
         if ($user) {
             $request->merge([
                 'auth_user' => $user,
