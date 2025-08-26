@@ -18,6 +18,8 @@ class AppServiceProvider extends ServiceProvider
     {
         $this->app->singleton('verify.recaptcha', \App\Http\Middleware\VerifyRecaptcha::class);
         $this->app->singleton('verify.api', \App\Http\Middleware\VerifyApiRequest::class);
+        $this->app->singleton('verify.role', \App\Http\Middleware\RoleMiddleware::class);
+        $this->app->singleton('throttle.role_based', \App\Http\Middleware\ThrottleRoleBased::class);
     }
 
     /**

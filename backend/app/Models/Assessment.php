@@ -6,8 +6,10 @@ use Illuminate\Database\Eloquent\Model;
 class Assessment extends Model
 {
     protected $fillable = [
-        'title', 'description', 'created_by_user_id', 'removed'
+        'title', 'description', 'time_allocated', 'time_unit', 'created_by_user_id', 'removed',
     ];
+
+    public $timestamps = true; 
 
     public function questions()
     {
