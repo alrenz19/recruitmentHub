@@ -24,8 +24,8 @@ class AssessmentPolicy
      */
     public function view(User $user, Assessment $assessment): bool
     {
-        // Allow viewing if user created the assessment or is an admin
-        return $assessment->created_by_user_id === $user->id || $user->role_id === 1; // Adjust role check as needed
+        // Allow viewing if user created the assessment or has role 1, 2, 3
+        return $assessment->created_by_user_id === $user->id || in_array($user->role_id, [1, 2, 3]);
     }
 
     /**
@@ -33,9 +33,8 @@ class AssessmentPolicy
      */
     public function create(User $user): bool
     {
-        // Allow all authenticated users to create assessments
-        // Add role restrictions if needed (e.g., only HR or Managers)
-        return true;
+        // Only users with role_id 1, 2, or 3 can create assessments
+        return in_array($user->role_id, [1, 2, 3]);
     }
 
     /**
@@ -43,8 +42,8 @@ class AssessmentPolicy
      */
     public function update(User $user, Assessment $assessment): bool
     {
-        // Allow update only if user created the assessment
-        return $assessment->created_by_user_id === $user->id;
+        // Only users with role_id 1, 2, or 3 and creator can update
+        return in_array($user->role_id, [1, 2, 3]) && $assessment->created_by_user_id === $user->id;
     }
 
     /**
@@ -52,8 +51,8 @@ class AssessmentPolicy
      */
     public function delete(User $user, Assessment $assessment): bool
     {
-        // Allow delete only if user created the assessment or is admin
-        return $assessment->created_by_user_id === $user->id || $user->role_id === 1;
+        // Only users with role_id 1, 2, or 3 can delete (creator or any of those roles)
+        return in_array($user->role_id, [1, 2, 3]) && $assessment->created_by_user_id === $user->id;
     }
 
     /**
@@ -61,8 +60,8 @@ class AssessmentPolicy
      */
     public function restore(User $user, Assessment $assessment): bool
     {
-        // Allow restore only if user created the assessment or is admin
-        return $assessment->created_by_user_id === $user->id || $user->role_id === 1;
+        // Only users with role_id 1, 2, or 3 can restore
+        return in_array($user->role_id, [1, 2, 3]) && $assessment->created_by_user_id === $user->id;
     }
 
     /**
@@ -70,7 +69,7 @@ class AssessmentPolicy
      */
     public function forceDelete(User $user, Assessment $assessment): bool
     {
-        // Allow permanent delete only for admins
-        return $user->role_id === 1; // Admin role
+        // Only role_id 1 (admin) can force delete
+        return $user->role_id === 1;
     }
 }

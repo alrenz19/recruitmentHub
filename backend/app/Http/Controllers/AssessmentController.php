@@ -6,57 +6,129 @@ namespace App\Http\Controllers;
 use App\Models\Assessment;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
-use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Str;
+use Illuminate\Support\Facades\Cache;
 use App\Http\Resources\AssessmentResource;
-use Illuminate\Validation\Rule;
-use Illuminate\Support\Facades\Storage;
 use Illuminate\Foundation\Auth\Access\AuthorizesRequests;
 use Illuminate\Foundation\Bus\DispatchesJobs;
 use Illuminate\Foundation\Validation\ValidatesRequests;
+use Illuminate\Support\Facades\DB;
 
 // Models
 use App\Models\AssessmentQuestion;
-use App\Models\AssessmentOption; // for the options
+use App\Models\AssessmentOption;
 
 class AssessmentController extends Controller
 {
+    use AuthorizesRequests, DispatchesJobs, ValidatesRequests;
+
     /**
      * Display a listing of the resource.
      */
-    use AuthorizesRequests, DispatchesJobs, ValidatesRequests;
     public function index(Request $request)
     {
-        // Authorize viewing assessments list
-        $this->authorize('viewAny', Assessment::class);
+        $cacheDuration = 300; // 5 minutes
 
-        // Validate and sanitize the limit parameter
         $request->validate([
-            'limit' => 'nullable|integer|min:1|max:100'
+            'limit' => 'nullable|integer|min:1|max:100',
+            'page'  => 'nullable|integer|min:1',
+            'refresh' => 'nullable|boolean'
         ]);
-        
+
         $limit = $request->input('limit', 10);
+        $page = $request->input('page', 1);
 
-        // Get assessments based on user role
-        $query = Assessment::with('questions.options')
-            ->where('removed', 0);
+        $cacheVersion = Cache::get('assessments_cache_version', 1);
+        $cacheKey = "assessments_list_{$limit}_{$page}_v{$cacheVersion}";
 
-        // If not admin, only show user's own assessments
-        if (Auth::user()->role_id !== 1) { // Adjust role check as needed
-            $query->where('created_by_user_id', Auth::id());
+        if ($request->boolean('refresh')) {
+            Cache::forget($cacheKey);
         }
 
-        $assessments = $query->orderBy('created_at', 'desc')
-            ->paginate($limit);
+        // Cache only the raw collection, not the paginator
+        $assessmentsData = Cache::remember($cacheKey, $cacheDuration, function () {
+            return Assessment::where('removed', 0)
+                ->with([
+                    'questions' => function ($q) {
+                        $q->where('removed', 0)
+                        ->select('id', 'assessment_id', 'question_text', 'question_type', 'image_path')
+                        ->with([
+                            'options' => function ($opt) {
+                                $opt->where('removed', 0)
+                                    ->select('id', 'question_id', 'option_text', 'is_correct');
+                            }
+                        ]);
+                    },
+                    'createdByUser:id,user_email',
+                ])
+                ->select('id', 'title', 'description', 'time_allocated', 'time_unit', 'created_at', 'created_by_user_id')
+                ->orderBy('created_at', 'desc')
+                ->get();
+        });
 
-        return AssessmentResource::collection($assessments);
+        // Paginate after caching
+        $paginated = new \Illuminate\Pagination\LengthAwarePaginator(
+            $assessmentsData->forPage($page, $limit),
+            $assessmentsData->count(),
+            $limit,
+            $page,
+            ['path' => $request->url(), 'query' => $request->query()]
+        );
+
+        // Return only the transformed data + meta (no unnecessary links)
+        return response()->json([
+            'data' => AssessmentResource::collection($paginated),
+            'meta' => [
+                'total' => $paginated->total(),
+                'per_page' => $paginated->perPage(),
+                'current_page' => $paginated->currentPage(),
+                'last_page' => $paginated->lastPage()
+            ]
+        ]);
     }
+
+
+    public function retrieveAssessments(Request $request)
+    {
+        $request->validate([
+            'per_page' => 'nullable|integer|min:1|max:100',
+            'last_id'  => 'nullable|integer|min:0',
+        ]);
+
+        $perPage = $request->input('per_page', 10);
+        $lastId = $request->input('last_id', 0);
+
+        // Fetch one extra to check for more
+        $data = DB::select(
+            'SELECT id, title FROM assessments WHERE removed = ? AND id > ? ORDER BY id ASC LIMIT ?',
+            [0, $lastId, $perPage + 1]
+        );
+
+        // Check if there are more rows
+        $hasMore = count($data) > $perPage;
+
+        // Remove the extra row
+        if ($hasMore) {
+            array_pop($data);
+        }
+
+        $newLastId = count($data) ? end($data)->id : null;
+
+        return response()->json([
+            'data' => $data,
+            'last_id' => $newLastId,
+            'has_more' => $hasMore,
+        ]);
+    }
+
+
 
     /**
      * Store a newly created resource in storage.
      */
     public function store(Request $request)
     {
+        // $this->authorize('create', Assessment::class);
+
         $rules = [
             'title' => 'required|string|max:255',
             'description' => 'nullable|string',
@@ -73,37 +145,29 @@ class AssessmentController extends Controller
 
         $validated = $request->validate($rules);
 
-        // Create assessment
         $assessment = Assessment::create([
             'title' => $validated['title'],
             'description' => $validated['description'] ?? null,
             'time_allocated' => $validated['time_allocated'],
             'time_unit' => $validated['time_unit'],
-            'created_by_user_id' => auth()->id(),
+            'created_by_user_id' =>  auth()->id() ?? 1,
         ]);
 
-        // Create questions
         foreach ($validated['questions'] as $q) {
             $imagePath = null;
+            if (!empty($q['image']) && preg_match('/^data:image\/(\w+);base64,/', $q['image'], $type)) {
+                $imageData = substr($q['image'], strpos($q['image'], ',') + 1);
+                $type = strtolower($type[1]);
+                $imageData = base64_decode($imageData);
 
-            if (!empty($q['image'])) {
-                // Convert Base64 to actual file
-                if (preg_match('/^data:image\/(\w+);base64,/', $q['image'], $type)) {
-                    $imageData = substr($q['image'], strpos($q['image'], ',') + 1);
-                    $type = strtolower($type[1]); // jpg, png, etc.
-                    $imageData = base64_decode($imageData);
+                $fileName = uniqid() . ".$type";
+                $storageDir = storage_path("app/public/assessments");
+                if (!file_exists($storageDir)) mkdir($storageDir, 0755, true);
 
-                    $fileName = uniqid() . ".$type";
-                    $storageDir = storage_path("app/public/assessments");
-                    if (!file_exists($storageDir)) {
-                        mkdir($storageDir, 0755, true);
-                    }
-                    
-                    $storagePath = $storageDir . "/$fileName";
-                    file_put_contents($storagePath, $imageData);
+                $storagePath = $storageDir . "/$fileName";
+                file_put_contents($storagePath, $imageData);
 
-                    $imagePath = "assessments/$fileName";
-                }
+                $imagePath = "assessments/$fileName";
             }
 
             $question = AssessmentQuestion::create([
@@ -114,7 +178,6 @@ class AssessmentController extends Controller
                 'removed' => 0,
             ]);
 
-            // Save options
             foreach ($q['options'] as $opt) {
                 $question->options()->create([
                     'option_text' => $opt['option_text'],
@@ -124,27 +187,13 @@ class AssessmentController extends Controller
             }
         }
 
+        // Increment cache version to invalidate old cached lists
+        Cache::increment('assessments_cache_version');
+
         return response()->json([
             'message' => 'Assessment created successfully',
             'assessment_id' => $assessment->id,
         ]);
-    }
-
-
-    /**
-     * Display the specified resource.
-     */
-    public function show(Assessment $assessment)
-    {
-        // Authorize viewing this specific assessment
-        $this->authorize('view', $assessment);
-
-        // Verify the assessment is not soft deleted
-        if ($assessment->removed) {
-            return response()->json(['message' => 'Assessment not found'], 404);
-        }
-        
-        return new AssessmentResource($assessment->load('questions.options'));
     }
 
     /**
@@ -302,4 +351,21 @@ class AssessmentController extends Controller
         return response()->json(['message' => 'Assessment deleted successfully']);
     }
 
+    /**
+     * Display the specified resource.
+     */
+    public function show(Assessment $assessment)
+    {
+        // Optional: skip authorize here if cached user logic handles access
+        if ($assessment->removed) {
+            return response()->json(['message' => 'Assessment not found'], 404);
+        }
+
+        $assessment->load([
+            'questions' => fn($query) => $query->select('id', 'assessment_id', 'question_text', 'question_type', 'image_path')->where('removed', 0),
+            'questions.options' => fn($query) => $query->select('id', 'question_id', 'option_text', 'is_correct')->where('removed', 0)
+        ]);
+
+        return new AssessmentResource($assessment);
+    }
 }

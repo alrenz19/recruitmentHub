@@ -1,10 +1,13 @@
 <?php
 
 namespace App\Http\Controllers;
+
 use App\Models\User;
+use App\Models\PersonalAccessToken;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Cache;
 
 class AuthController extends Controller
 {
@@ -15,11 +18,10 @@ class AuthController extends Controller
             'password'   => 'required|string',
         ]);
 
-        // Fetch user with eager-loaded relations
         $user = User::with(['hrStaff', 'applicant'])
-                    ->where('user_email', $request->user_email)
-                    ->where('is_removed', 0)
-                    ->first();
+            ->where('user_email', $request->user_email)
+            ->where('is_removed', 0)
+            ->first();
 
         if (!$user || !Hash::check($request->password, $user->password_hash)) {
             return response()->json([
@@ -27,55 +29,52 @@ class AuthController extends Controller
             ], 401);
         }
 
-        // Create a new personal access token
-        $token = $user->createToken('auth_token')->plainTextToken;
+        // 🔹 Invalidate all previous tokens (DB + cache)
+        // $oldTokens = $user->tokens()->where('name', 'auth_token')->get();
+        // foreach ($oldTokens as $oldToken) {
+        //     Cache::forget("sanctum_token:{$oldToken->token}");
+        //     Cache::forget("sanctum_user:{$oldToken->tokenable_id}");
+        //     Cache::forget("sanctum_latest_token_user:{$oldToken->tokenable_id}");
+        // }
+        // $user->tokens()->where('name', 'auth_token')->delete();
+
+        // 🔹 Create new personal access token
+        $tokenResult = $user->createToken('auth_token');
+        $token = $tokenResult->plainTextToken;
+        $tokenDb = $tokenResult->accessToken;       // DB object
+
+        // Cache DB token object keyed by plain token
+        Cache::put("sanctum_token:{$token}", $tokenDb, now()->addMinutes(10));
+        Cache::put("sanctum_user:{$user->id}", $user, now()->addMinutes(10));
+        Cache::put("sanctum_latest_token_user:{$user->id}", $tokenDb->token, now()->addMinutes(10)); 
 
         return response()->json([
             'message' => 'Login successful',
             'user' => [
                 'id'        => $user->id,
                 'role_id'   => $user->role_id,
-                'full_name' => $user->full_name, // comes from accessor
+                'full_name' => $user->full_name,
             ],
             'token' => $token
-        ])->cookie(
-            'auth_token', // Cookie name
-            $token,       // Token value
-            60*24,        // Expiration in minutes (1 day)
-            '/',          // Path
-            null,         // Domain
-            true,         // Secure (HTTPS only) 
-            true          // HttpOnly
-        );
+        ]);
     }
+
 
     public function logout(Request $request)
     {
-        $user = $request->user();
+        $token = $request->user()?->currentAccessToken();
 
-        if ($user) {
-            // Delete the current token (used for this request)
-            $request->user()->currentAccessToken()->delete();
+        if ($token) {
+            Cache::forget("sanctum_token:{$token->token}");
+            Cache::forget("sanctum_user:{$token->tokenable_id}");
+            $token->delete();
         }
 
-        // Remove the cookie from the client
         return response()->json([
             'message' => 'Logged out successfully'
-        ])->cookie(
-            'auth_token', // Cookie name
-            null,         // Delete by setting null
-            -1,           // Expire immediately
-            '/',          
-            null,
-            true,         // Secure
-            true          // HttpOnly
-        );
+        ]);
     }
 
-
-    /**
-     * Admin-only: create a new user
-     */
     public function createUser(Request $request)
     {
         $request->validate([

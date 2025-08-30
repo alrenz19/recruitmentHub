@@ -10,39 +10,34 @@ use Illuminate\Foundation\Support\Providers\RouteServiceProvider as ServiceProvi
 
 class RouteServiceProvider extends ServiceProvider
 {
-    /**
-     * Boot the route services.
-     */
     public function boot(): void
     {
         $this->configureRateLimiting();
 
         $this->routes(function () {
-            // Load API routes
             Route::middleware('api')
                 ->prefix('api')
                 ->group(base_path('routes/api.php'));
 
-            // Load Web routes
             Route::middleware('web')
                 ->group(base_path('routes/web.php'));
         });
     }
 
-    /**
-     * Configure rate limiting for the application.
-     */
     protected function configureRateLimiting(): void
     {
-        RateLimiter::for('role_based', function (Request $request) {
-            $user = $request->user();
+        // This defines the default "api" rate limiter
+        RateLimiter::for('api', function (Request $request) {
+            return Limit::perMinute(60)->by($request->user()?->id ?: $request->ip());
+        });
 
-            if ($user && in_array($user->role_id, [1, 2, 3])) {
-                // HR higher limit
-                return [Limit::perMinute(200)->by($user->id)];
+        // Your custom role-based limiter
+        RateLimiter::for('role_based', function (Request $request) {
+            $user = auth()->user();
+            if ($user && in_array($user->role_id, [1,2,3])) {
+                return Limit::perMinute(200)->by($user->id);
             }
-            // Default limit for others
-            return [Limit::perMinute(60)->by(optional($user)->id ?: $request->ip())];
+            return Limit::perMinute(60)->by($request->user()?->id ?: $request->ip());
         });
     }
 }

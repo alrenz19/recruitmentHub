@@ -15,11 +15,7 @@ return [
     |
     */
 
-    'stateful' => explode(',', env('SANCTUM_STATEFUL_DOMAINS', sprintf(
-        '%s%s',
-        'localhost,localhost:3000,127.0.0.1,127.0.0.1:8000,localhost,127.0.0.1:5173, 192.168.192.1:5173, 172.16.98.102:5173, ::1',
-        Sanctum::currentApplicationUrlWithPort(),
-    ))),
+    'stateful' => [],
 
     /*
     |--------------------------------------------------------------------------
@@ -77,7 +73,19 @@ return [
     'middleware' => [
         'authenticate_session' => Laravel\Sanctum\Http\Middleware\AuthenticateSession::class,
         'encrypt_cookies' => Illuminate\Cookie\Middleware\EncryptCookies::class,
-        'validate_csrf_token' => Illuminate\Foundation\Http\Middleware\ValidateCsrfToken::class,
     ],
+
+
+        /*
+    |--------------------------------------------------------------------------
+    | Personal Access Token Model
+    |--------------------------------------------------------------------------
+    |
+    | You may specify a custom model that extends the default
+    | Laravel\Sanctum\PersonalAccessToken. This model will be used
+    | when issuing and interacting with personal access tokens.
+    |
+    */
+    'personal_access_token_model' => App\Models\PersonalAccessToken::class,
 
 ];

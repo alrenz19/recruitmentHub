@@ -3,7 +3,12 @@ namespace App\Models;
 
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
+
+
 use Laravel\Sanctum\HasApiTokens;
+use App\Models\PersonalAccessToken; // make sure this exists
 
 class User extends Authenticatable
 {
@@ -66,7 +71,7 @@ class User extends Authenticatable
 
     public function applicant()
     {
-        return $this->hasOne(Applicant::class, 'user_id', 'id')->where('removed', 0);
+        return $this->hasOne(Candidate::class, 'user_id', 'id')->where('removed', 0);
     }
 
     // 👇 Custom accessor for full_name
@@ -82,4 +87,47 @@ class User extends Authenticatable
 
         return null;
     }
+
+    public function isTokenRequest(Request $request): bool
+    {
+        return $request->bearerToken() && $this->currentAccessToken() !== null;
+    }
+
+        /**
+     * Get the current access token being used for this request.
+     *
+     * @return \Laravel\Sanctum\PersonalAccessToken|null
+     */
+    public function currentAccessToken()
+    {
+        $request = app(Request::class);
+        $tokenString = $request->bearerToken();
+
+        if (!$tokenString) return null;
+
+        $token = Cache::get("sanctum_token:{$tokenString}");
+
+        // If cache missed, fetch from DB
+        if (!$token) {
+            $token = PersonalAccessToken::findToken($tokenString);
+            if ($token) {
+                Cache::put("sanctum_token:{$tokenString}", $token, now()->addMinutes(10));
+            }
+        }
+
+        return $token;
+    }
+
+    public function cachedUser()
+    {
+        $token = $this->currentAccessToken();
+        if (!$token) return null;
+
+        return Cache::remember(
+            "sanctum_user:{$token->id}",
+            now()->addMinutes(5),
+            fn () => $token->tokenable  // assumes tokenable is the User
+        );
+    }
+
 }

@@ -23,7 +23,6 @@ class RoleMiddleware
             return response()->json(['message' => 'Unauthorized'], 403);
         }
         
-        // Applicants (role_id = 3) cannot access any admin-only routes
         if (!in_array($user->role_id, $allowedRoles)) {
             return response()->json(['message' => 'This route does not exist'], 403);
         }

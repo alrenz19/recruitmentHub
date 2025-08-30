@@ -8,6 +8,8 @@ use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use App\Models\User;
+use App\Models\PersonalAccessToken;
+use Laravel\Sanctum\Sanctum;
 
 class AppServiceProvider extends ServiceProvider
 {
@@ -16,10 +18,7 @@ class AppServiceProvider extends ServiceProvider
      */
     public function register(): void
     {
-        $this->app->singleton('verify.recaptcha', \App\Http\Middleware\VerifyRecaptcha::class);
-        $this->app->singleton('verify.api', \App\Http\Middleware\VerifyApiRequest::class);
-        $this->app->singleton('verify.role', \App\Http\Middleware\RoleMiddleware::class);
-        $this->app->singleton('throttle.role_based', \App\Http\Middleware\ThrottleRoleBased::class);
+       
     }
 
     /**
@@ -29,6 +28,9 @@ class AppServiceProvider extends ServiceProvider
     {
         // Set default string length for older MySQL versions
         Schema::defaultStringLength(191);
+        
+        // Use our custom token model
+        Sanctum::usePersonalAccessTokenModel(PersonalAccessToken::class);
 
         // Optional: globally map the authentication email field
         User::saving(function ($user) {
