@@ -48,8 +48,8 @@ Route::middleware(['auth:sanctum', 'verify.api', 'throttle:role_based', 'verify.
     Route::post('/assessments', [AssessmentController::class, 'store']);
     Route::get('/assessments/{id}', [AssessmentController::class, 'show']);
     Route::get('/assessments', [AssessmentController::class, 'index']);
-    Route::put('/assessments/{assessment}', [AssessmentController::class, 'update']);
-    Route::delete('/assessments/{assessment}', [AssessmentController::class, 'destroy']);
+    Route::put('/assessments/{id}', [AssessmentController::class, 'update']);
+    Route::delete('/assessments/{id}', [AssessmentController::class, 'destroy']);
 });
 
 // -------------------------------
