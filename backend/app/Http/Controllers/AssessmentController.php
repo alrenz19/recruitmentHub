@@ -26,7 +26,6 @@ class AssessmentController extends Controller
      */
     public function index(Request $request)
     {
-        $cacheDuration = 300; // 5 minutes
 
         $request->validate([
             'limit' => 'nullable|integer|min:1|max:100',
@@ -37,16 +36,7 @@ class AssessmentController extends Controller
         $limit = $request->input('limit', 10);
         $page = $request->input('page', 1);
 
-        $cacheVersion = Cache::get('assessments_cache_version', 1);
-        $cacheKey = "assessments_list_{$limit}_{$page}_v{$cacheVersion}";
-
-        if ($request->boolean('refresh')) {
-            Cache::forget($cacheKey);
-        }
-
-        // Cache only the raw collection, not the paginator
-        $assessmentsData = Cache::remember($cacheKey, $cacheDuration, function () {
-            return Assessment::where('removed', 0)
+        $assessmentsData = Assessment::where('removed', 0)
                 ->with([
                     'questions' => function ($q) {
                         $q->where('removed', 0)
@@ -63,7 +53,6 @@ class AssessmentController extends Controller
                 ->select('id', 'title', 'description', 'time_allocated', 'time_unit', 'created_at', 'created_by_user_id')
                 ->orderBy('created_at', 'desc')
                 ->get();
-        });
 
         // Paginate after caching
         $paginated = new \Illuminate\Pagination\LengthAwarePaginator(
@@ -331,7 +320,7 @@ class AssessmentController extends Controller
             'message' => 'Update failed: ' . $e->getMessage()
         ], 500);
     }
-    }
+}
 
 
     /**

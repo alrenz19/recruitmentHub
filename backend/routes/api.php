@@ -67,6 +67,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
     // Candidate routes
     Route::get('/candidates/{id}', [CandidateController::class, 'show']);
     Route::get('/candidates', [CandidateController::class, 'index']);
+    Route::post('/candidates', [CandidateController::class, 'createCandidate']);
 });
 
 // //route for submit request

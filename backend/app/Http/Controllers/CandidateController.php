@@ -137,6 +137,17 @@ class CandidateController extends Controller
         $hashed = bcrypt($password, ['rounds' => 10]); // default 12 → ~200ms; 10 → ~50-100ms
 
         $loginUrl = 'http://172.16.98.68:5173/';
+        
+        
+        $exists = DB::table('users')->where('user_email', $request->email)->exists();
+        if ($exists) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Record already exists with this email.'
+            ], 409); // 409 Conflict
+        }
+
+
 
         // -----------------------------
         // 1️⃣ Only essential DB inserts in transaction

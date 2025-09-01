@@ -1,5 +1,7 @@
-docker run -d --name redis -p 6379:6379 redis
 composer require predis/predis
+php artisan queue:work
+docker run -d --name redis -p 6379:6379 redis
 
+change the .env to redis
 
 //change the api in prod later
