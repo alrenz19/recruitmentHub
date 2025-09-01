@@ -13,41 +13,31 @@ class DashboardController extends Controller
     public function getStats(Request $request)
     {
         $filter = $request->query('filter', 'all');
+        $queryRange = $this->getQueryRange($filter);
 
-        // Get the current dashboard cache version
-        $cacheVersion = Cache::get('dashboard_stats_cache_version', 1);
-
-        $cacheKey = "dashboard_stats_{$filter}_v{$cacheVersion}";
-
-        $data = Cache::remember($cacheKey, $this->cacheDuration, function() use ($filter) {
-            $queryRange = $this->getQueryRange($filter);
+        $results = DB::select("
+            SELECT 'applicants' as type, NULL as category, COUNT(*) as count
+            FROM applicants 
+            WHERE removed = 0 {$this->getDateCondition('applicants', $queryRange)}
             
-            $results = DB::select("
-                SELECT 'applicants' as type, NULL as category, COUNT(*) as count
-                FROM applicants 
-                WHERE in_active = 0 {$this->getDateCondition('applicants', $queryRange)}
-                
-                UNION ALL
-                
-                SELECT 'pipeline' as type, current_stage_id as category, COUNT(*) as count
-                FROM applicant_pipeline 
-                {$this->getDateCondition('applicant_pipeline', $queryRange, 'WHERE')}
-                GROUP BY current_stage_id
-                
-                UNION ALL
-                
-                SELECT 'job_offers' as type, status as category, COUNT(*) as count
-                FROM job_offers 
-                WHERE status IN ('pending', 'pending_ceo', 'approved', 'declined')
-                {$this->getDateCondition('job_offers', $queryRange, 'AND')}
-                GROUP BY status
-            ");
+            UNION ALL
             
-            return $this->processResults($results);
-        });
+            SELECT 'pipeline' as type, current_stage_id as category, COUNT(*) as count
+            FROM applicant_pipeline 
+            {$this->getDateCondition('applicant_pipeline', $queryRange, 'WHERE')}
+            GROUP BY current_stage_id
+            
+            UNION ALL
+            
+            SELECT 'job_offers' as type, status as category, COUNT(*) as count
+            FROM job_offers 
+            WHERE status IN ('pending', 'pending_ceo', 'approved', 'declined')
+            {$this->getDateCondition('job_offers', $queryRange, 'AND')}
+            GROUP BY status
+        ");
 
-        return response()->json($data);
-    }
+        return response()->json($this->processResults($results));
+}
 
     private function getQueryRange($filter)
     {
