@@ -17,32 +17,50 @@ use Illuminate\Support\Facades\Route;
 //     ->middleware('verify.recaptcha');
 
 Route::post('/login', [AuthController::class, 'login']);
+Route::post('/logout', [AuthController::class, 'logout']);
 
 // -------------------------------
 // Protected routes (any authenticated user)
 // -------------------------------
 // Route::middleware(['auth.cached', 'track.token.usage', 'verify.api'])
-Route::middleware(['auth:sanctum', 'verify.api'])->group(function () {
+// Route::middleware(['auth:sanctum', 'verify.api'])->group(function () {
 
 
-    // Check authentication info
-    Route::get('/check-auth', function (Request $request) {
-        // Cache user per request
-        if (!$request->attributes->has('cached_user')) {
-            $request->attributes->set('cached_user', $request->user());
-        }
+//     // Check authentication info
+//     Route::get('/check-auth', function (Request $request) {
+//         // Cache user per request
+//         if (!$request->attributes->has('cached_user')) {
+//             $request->attributes->set('cached_user', $request->user());
+//         }
 
-        $user = $request->attributes->get('cached_user');
+//         $user = $request->attributes->get('cached_user');
 
-        return response()->json([
-            'id' => $user->id,
-            'role_id' => $user->role_id,
-            'full_name' => $user->full_name,
-        ]);
+//         return response()->json([
+//             'id' => $user->id,
+//             'role_id' => $user->role_id,
+//             'full_name' => $user->full_name,
+//         ]);
+//     });
+
+//     // Logout
+//     Route::post('/logout', [AuthController::class, 'logout']);
+// });
+
+Route::middleware(['auth:sanctum'])->get('/check-auth', function (Request $request) {
+
+    $userId = $request->user()->id;
+
+    // Cache the minimal user info for 1 minute
+    $user = Cache::remember("user:{$userId}", 60, function () use ($request) {
+        $u = $request->user();
+        return [
+            'id' => $u->id,
+            'role_id' => $u->role_id,
+            'full_name' => $u->full_name,
+        ];
     });
 
-    // Logout
-    Route::post('/logout', [AuthController::class, 'logout']);
+    return response()->json($user);
 });
 
 // -------------------------------
@@ -68,6 +86,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::get('/candidates/{id}', [CandidateController::class, 'show']);
     Route::get('/candidates', [CandidateController::class, 'index']);
     Route::post('/candidates', [CandidateController::class, 'createCandidate']);
+    Route::put('/candidates/{id}', [CandidateController::class, 'updateCandidate']);
 });
 
 // //route for submit request

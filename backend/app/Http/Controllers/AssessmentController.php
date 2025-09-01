@@ -26,54 +26,110 @@ class AssessmentController extends Controller
      */
     public function index(Request $request)
     {
-
-        $request->validate([
-            'limit' => 'nullable|integer|min:1|max:100',
-            'page'  => 'nullable|integer|min:1',
-            'refresh' => 'nullable|boolean'
-        ]);
-
         $limit = $request->input('limit', 10);
         $page = $request->input('page', 1);
+        $search = $request->input('search');
+        $refresh = $request->boolean('refresh', false);
 
-        $assessmentsData = Assessment::where('removed', 0)
-                ->with([
-                    'questions' => function ($q) {
-                        $q->where('removed', 0)
-                        ->select('id', 'assessment_id', 'question_text', 'question_type', 'image_path')
-                        ->with([
-                            'options' => function ($opt) {
-                                $opt->where('removed', 0)
-                                    ->select('id', 'question_id', 'option_text', 'is_correct');
-                            }
-                        ]);
-                    },
-                    'createdByUser:id,user_email',
-                ])
-                ->select('id', 'title', 'description', 'time_allocated', 'time_unit', 'created_at', 'created_by_user_id')
+        // Cache versioning (increment if assessments change)
+        $cacheVersion = Cache::get('assessments_cache_version', 1);
+
+        $filters = [
+            'limit' => $limit,
+            'page' => $page,
+            'search' => $search,
+            'version' => $cacheVersion
+        ];
+
+        $cacheKey = 'assessments_list_' . md5(json_encode($filters));
+
+        if ($refresh) {
+            Cache::forget($cacheKey);
+        }
+
+        $data = Cache::remember($cacheKey, 300, function () use ($limit, $page, $search) {
+            $offset = ($page - 1) * $limit;
+
+            // 1️⃣ Count total assessments
+            $total = DB::table('assessments')
+                ->where('removed', 0)
+                ->when($search, fn($q) => $q->where('title', 'like', "%{$search}%"))
+                ->count();
+
+            // 2️⃣ Fetch assessments for current page
+            $assessments = DB::table('assessments')
+                ->select('id', 'title', 'description', 'time_allocated', 'time_unit', 'created_at')
+                ->where('removed', 0)
+                ->when($search, fn($q) => $q->where('title', 'like', "%{$search}%"))
                 ->orderBy('created_at', 'desc')
+                ->limit($limit)
+                ->offset($offset)
                 ->get();
 
-        // Paginate after caching
-        $paginated = new \Illuminate\Pagination\LengthAwarePaginator(
-            $assessmentsData->forPage($page, $limit),
-            $assessmentsData->count(),
-            $limit,
-            $page,
-            ['path' => $request->url(), 'query' => $request->query()]
-        );
+            $assessmentIds = $assessments->pluck('id')->toArray();
 
-        // Return only the transformed data + meta (no unnecessary links)
+            // 3️⃣ Fetch all questions for these assessments
+            $questions = DB::table('assessment_questions')
+                ->select('id', 'assessment_id', 'question_text', 'question_type', 'image_path')
+                ->where('removed', 0)
+                ->whereIn('assessment_id', $assessmentIds)
+                ->get();
+
+            $questionIds = $questions->pluck('id')->toArray();
+
+            // 4️⃣ Fetch all options for these questions
+            $options = DB::table('assessment_options')
+                ->select('id', 'question_id', 'option_text', 'is_correct')
+                ->where('removed', 0)
+                ->whereIn('question_id', $questionIds)
+                ->get()
+                ->groupBy('question_id');
+
+            // 5️⃣ Attach options to questions
+            $questionsByAssessment = $questions->groupBy('assessment_id')->map(function ($qs) use ($options) {
+                return $qs->map(function ($q) use ($options) {
+                    return [
+                        'id' => $q->id,
+                        'question_text' => $q->question_text,
+                        'question_type' => $q->question_type,
+                        'image_path' => $q->image_path,
+                        'options' => $options[$q->id] ?? [],
+                    ];
+                });
+            });
+
+            // 6️⃣ Attach questions to assessments
+            $data = $assessments->map(function ($a) use ($questionsByAssessment) {
+                return [
+                    'id' => $a->id,
+                    'title' => $a->title,
+                    'description' => $a->description,
+                    'time_allocated' => $a->time_allocated,
+                    'time_unit' => $a->time_unit,
+                    'created_at' => $a->created_at,
+                    'questions' => $questionsByAssessment[$a->id] ?? [],
+                ];
+            });
+
+            return [
+                'data' => $data,
+                'total' => $total,
+            ];
+        });
+
         return response()->json([
-            'data' => AssessmentResource::collection($paginated),
+            'data' => $data['data'],
             'meta' => [
-                'total' => $paginated->total(),
-                'per_page' => $paginated->perPage(),
-                'current_page' => $paginated->currentPage(),
-                'last_page' => $paginated->lastPage()
-            ]
+                'total' => $data['total'],
+                'per_page' => $limit,
+                'current_page' => $page,
+                'last_page' => ceil($data['total'] / $limit),
+            ],
         ]);
     }
+
+
+
 
 
     public function retrieveAssessments(Request $request)

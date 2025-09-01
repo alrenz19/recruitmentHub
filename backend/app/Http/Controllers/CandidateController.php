@@ -11,6 +11,7 @@ use Illuminate\Support\Str;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Pagination\LengthAwarePaginator;
 
+
 use App\Models\Candidate;
 use App\Models\User;
 use App\Models\ApplicantAssessment;
@@ -28,7 +29,6 @@ class CandidateController extends Controller
      * List candidates with optional search, filters, and pagination
      */
 
-
     public function index(Request $request)
     {
         $cacheDuration = 300; // 5 minutes
@@ -42,78 +42,120 @@ class CandidateController extends Controller
         $perPage = $request->input('per_page', 10);
         $page = $request->input('page', 1);
 
-        // Cache versioning: can be incremented whenever a candidate is updated/added
         $cacheVersion = Cache::get('candidates_cache_version', 1);
 
-        // Generate a cache key for this combination of filters + version
-        $cacheKey = 'candidates_list_' . md5(
-            json_encode([
-                'search' => $request->input('search'),
-                'status' => $request->input('status'),
-                'role' => $request->input('role'),
-                'appliedDate' => $request->input('appliedDate'),
-                'version' => $cacheVersion
-            ])
-        );
+        $filters = [
+            'search' => $request->input('search'),
+            'status' => $request->input('status'),
+            'role' => $request->input('role'),
+            'appliedDate' => $request->input('appliedDate'),
+            'version' => $cacheVersion
+        ];
 
-        // Optional: force refresh
+        $cacheKey = 'candidates_list_' . md5(json_encode($filters));
+
         if ($request->boolean('refresh')) {
             Cache::forget($cacheKey);
         }
 
-        // Cache raw collection
-        $candidatesData = Cache::remember($cacheKey, $cacheDuration, function () use ($request) {
-            $query = Candidate::with('applicantFiles', 'pipeline');
+        $data = Cache::remember($cacheKey, $cacheDuration, function () use ($filters) {
 
-            if ($search = $request->input('search')) {
-                $query->where(function ($q) use ($search) {
-                    $q->where('full_name', 'like', "%{$search}%")
-                    ->orWhere('position_desired', 'like', "%{$search}%");
-                });
+            $where = [];
+            $bindings = [];
+
+            if ($filters['search']) {
+                $where[] = "(c.full_name LIKE ? OR c.position_desired LIKE ?)";
+                $bindings[] = "%{$filters['search']}%";
+                $bindings[] = "%{$filters['search']}%";
             }
 
-            if (!is_null($status = $request->input('status'))) {
-                $query->where('in_active', $status);
+            if (!is_null($filters['status'])) {
+                $where[] = "COALESCE(p.note,'inactive') = ?";
+                $bindings[] = $filters['status'];
             }
 
-            if ($role = $request->input('role')) {
-                $query->where('job_info_id', $role);
+            if ($filters['role']) {
+                $where[] = "c.position_desired = ?";
+                $bindings[] = $filters['role'];
             }
 
-            if ($appliedDate = $request->input('appliedDate')) {
-                $query->whereDate('created_at', $appliedDate);
+            if ($filters['appliedDate']) {
+                $where[] = "DATE(c.created_at) = ?";
+                $bindings[] = $filters['appliedDate'];
             }
 
-            return $query->orderBy('created_at', 'desc')->get();
+            $whereSql = count($where) ? 'WHERE ' . implode(' AND ', $where) : '';
+
+            $sql = "
+                SELECT 
+                    c.id,
+                    c.full_name AS name,
+                    c.position_desired AS role,
+                    DATE(c.created_at) AS appliedDate,
+                    COALESCE(MAX(af.file_path),'no submitted file') AS attachment,
+                    COALESCE(MAX(p.note),'inactive') AS status,
+                    c.email,
+                    MAX(p.schedule_date) AS assessmentDate,
+                    COALESCE(MAX(rs.stage_name),'N/A') AS applicationStage,
+                    GROUP_CONCAT(a.id) AS assessment_ids,
+                    GROUP_CONCAT(a.title) AS assessment_titles,
+                    c.created_at
+                FROM applicants c
+                LEFT JOIN applicant_pipeline p ON p.applicant_id = c.id
+                LEFT JOIN recruitment_stages rs ON rs.id = p.current_stage_id
+                LEFT JOIN applicant_files af ON af.applicant_id = c.id
+                LEFT JOIN applicant_assessments aa ON aa.applicant_id = c.id
+                LEFT JOIN assessments a ON a.id = aa.assessment_id
+                {$whereSql}
+                GROUP BY c.id, c.full_name, c.position_desired, c.email, c.created_at
+                ORDER BY c.created_at DESC
+            ";
+
+            $results = DB::select($sql, $bindings);
+
+            // Transform GROUP_CONCAT results into arrays
+            $candidates = array_map(function ($row) {
+                $assessmentData = [];
+                if (!empty($row->assessment_ids)) {
+                    $ids = explode(',', $row->assessment_ids);
+                    $titles = explode(',', $row->assessment_titles);
+                    foreach ($ids as $index => $id) {
+                        $assessmentData[] = [
+                            'id' => $id,
+                            'title' => $titles[$index] ?? null,
+                        ];
+                    }
+                }
+
+                return [
+                    'id' => $row->id,
+                    'name' => $row->name,
+                    'role' => $row->role ?? 'Open Position',
+                    'appliedDate' => $row->appliedDate,
+                    'attachment' => $row->attachment,
+                    'status' => $row->status,
+                    'email' => $row->email,
+                    'assessmentDate' => $row->assessmentDate,
+                    'applicationStage' => $row->applicationStage,
+                    'assessmentData' => $assessmentData,
+                ];
+            }, $results);
+
+            return $candidates;
         });
 
         // Paginate after caching
+        $total = count($data);
         $paginated = new LengthAwarePaginator(
-            $candidatesData->forPage($page, $perPage),
-            $candidatesData->count(),
+            array_slice($data, ($page - 1) * $perPage, $perPage),
+            $total,
             $perPage,
             $page,
             ['path' => $request->url(), 'query' => $request->query()]
         );
 
-        // Transform data for response
-        $data = $paginated->map(function ($candidate) {
-            return [
-                'id' => $candidate->id,
-                'name' => $candidate->full_name,
-                'role' => $candidate->position_desired ?? 'Open Position',
-                'appliedDate' => $candidate->created_at->format('Y-m-d'),
-                'attachment' => $candidate->applicantFiles->pluck('file_path')->first() ?? 'no submitted file',
-                'status' => $candidate->pipeline->pluck('note')->first() ?? 'inactive',
-                'email' => $candidate->email,
-                'assessmentDate' => $candidate->pipeline->pluck('schedule_date')->first(),
-                'applicationStage' => $candidate->pipeline->currentStage->pluck('stage_name')->first(),
-                'assessmentData' => $candidate->assessments->pluck('id')->toArray()
-            ];
-        });
-
         return response()->json([
-            'data' => $data,
+            'data' => $paginated->items(),
             'meta' => [
                 'total' => $paginated->total(),
                 'per_page' => $paginated->perPage(),
@@ -125,13 +167,14 @@ class CandidateController extends Controller
 
 
 
+
     /**
      * Store a new candidate
      */
     public function createCandidate(Request $request)
     {
         $creator = auth()->id(); 
-        $password = $request->generatedPassword; // Generate password
+        $password = $request->generatedPassword;
 
         // Optional: reduce bcrypt cost to speed up HTTP response
         $hashed = bcrypt($password, ['rounds' => 10]); // default 12 → ~200ms; 10 → ~50-100ms
@@ -230,35 +273,96 @@ class CandidateController extends Controller
     /**
      * Update candidate
      */
-    public function update(Request $request, $id)
+    public function updateCandidate(Request $request, $id)
     {
-        $candidate = Candidate::findOrFail($id);
+        $creator = auth()->id();
 
+        // Validate input
         $request->validate([
-            'name'            => 'sometimes|required|string|max:255',
-            'role'            => 'sometimes|required|string|max:255',
-            'employment_type' => 'sometimes|required|string|max:50',
-            'applied_date'    => 'sometimes|required|date',
-            'attachment'      => 'nullable|file|max:2048',
-            'status'          => 'sometimes|required|string|max:50',
+            'fullName'       => 'sometimes|required|string|max:255',
+            'role'           => 'sometimes|required|string|max:255',
+            'assessmentDate' => 'sometimes|required|date',
+            'assessments'    => 'sometimes|array',
+            'email'          => 'sometimes|required|email|max:255'
         ]);
 
-        $data = $request->only([
-            'name', 'role', 'employment_type', 'applied_date', 'status'
-        ]);
+        // Check if updating email to an existing one
+        if ($request->email) {
+            $exists = DB::table('users')
+                ->where('user_email', $request->email)
+                ->where('id', '!=', DB::table('applicants')->where('id', $id)->value('user_id'))
+                ->exists();
 
-        // Handle file upload
-        if ($request->hasFile('attachment')) {
-            $data['attachment'] = $request->file('attachment')->store('candidate_files', 'public');
+            if ($exists) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Record already exists with this email.'
+                ], 409);
+            }
         }
 
-        $candidate->update($data);
-        Cache::increment('candidates_cache_version');
+        DB::transaction(function () use ($request, $id, $creator) {
+            // 1️⃣ Update user email if provided
+            if ($request->email) {
+                DB::table('users')
+                    ->where('id', DB::table('applicants')->where('id', $id)->value('user_id'))
+                    ->update([
+                        'user_email' => $request->email,
+                        'updated_at' => now()
+                    ]);
+            }
+
+            // 2️⃣ Update applicant
+            $applicantData = [];
+            if ($request->fullName) $applicantData['full_name'] = $request->fullName;
+            if ($request->role) $applicantData['position_desired'] = $request->role;
+            if ($request->email) $applicantData['email'] = $request->email;
+            if (!empty($applicantData)) $applicantData['updated_at'] = now();
+
+            if ($applicantData) {
+                DB::table('applicants')->where('id', $id)->update($applicantData);
+            }
+
+            // 3️⃣ Update pipeline
+            if ($request->assessmentDate) {
+                DB::table('applicant_pipeline')
+                    ->where('applicant_id', $id)
+                    ->update([
+                        'schedule_date' => $request->assessmentDate,
+                        'updated_at' => now(),
+                        'updated_by_user_id' => $creator
+                    ]);
+            }
+
+            // 4️⃣ Update assessments
+            if (!empty($request->assessments)) {
+                // Delete old assessments
+                DB::table('applicant_assessments')->where('applicant_id', $id)->delete();
+
+                // Insert new ones
+                $insertData = [];
+                foreach ($request->assessments as $assessmentId) {
+                    $insertData[] = [
+                        'applicant_id' => $id,
+                        'assessment_id' => $assessmentId,
+                        'assigned_by' => $creator,
+                        'created_at' => now(),
+                        'updated_at' => now(),
+                    ];
+                }
+                if ($insertData) DB::table('applicant_assessments')->insert($insertData);
+            }
+
+            // 5️⃣ Increment cache version
+            Cache::increment('candidates_cache_version');
+        });
+
         return response()->json([
-            'message'   => 'Candidate updated successfully',
-            'candidate' => $candidate
+            'success' => true,
+            'message' => 'Candidate updated successfully'
         ]);
     }
+
 
     /**
      * Delete candidate
