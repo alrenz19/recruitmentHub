@@ -5,3 +5,9 @@ docker run -d --name redis -p 6379:6379 redis
 change the .env to redis
 
 //change the api in prod later
+
+
+//close this
+DB::listen(function ($query) {
+    logger($query->sql, $query->bindings, $query->time);
+});

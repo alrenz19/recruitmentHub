@@ -1,14 +1,20 @@
 <?php
 
+use Illuminate\Support\Facades\Mail;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Route;
+
+
 use App\Http\Controllers\RequestController;
 use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\AssessmentController;
 use App\Http\Controllers\AuthController;
 use App\Http\Controllers\CandidateController;
-use Illuminate\Support\Facades\Mail;
+use App\Http\Controllers\RecruitmentBoardController;
+use App\Http\Controllers\ScheduleController;
+use App\Http\Controllers\HRStaffController;
 
-use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Route;
+
 
 // -------------------------------
 // Public routes
@@ -87,6 +93,21 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::get('/candidates', [CandidateController::class, 'index']);
     Route::post('/candidates', [CandidateController::class, 'createCandidate']);
     Route::put('/candidates/{id}', [CandidateController::class, 'updateCandidate']);
+
+    // Recruitment routes
+    Route::get('/recruitment-board', [RecruitmentBoardController::class, 'getBoard']);
+    Route::get('/recruitment-board/{stage}', [RecruitmentBoardController::class, 'getStageApplicants']);
+    Route::get('/recruitment-board-details/{id}', [RecruitmentBoardController::class, 'getApplicantDetails']);
+
+    // Schedule routes
+    Route::get('/schedules', [ScheduleController::class, 'index']);
+    Route::post('/schedules', [ScheduleController::class, 'updateSchedule']);
+
+    // HR staff routes
+    Route::get('/hr-staff', [HRStaffController::class, 'index']);
+    Route::post('/hr-staff', [HRStaffController::class, 'store']);
+    Route::put('/hr-staff/{id}', [HRStaffController::class, 'update']);
+    Route::delete('/hr-staff/{id}', [HRStaffController::class, 'destroy']);
 });
 
 // //route for submit request

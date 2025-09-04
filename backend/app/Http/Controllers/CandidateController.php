@@ -179,7 +179,7 @@ class CandidateController extends Controller
         // Optional: reduce bcrypt cost to speed up HTTP response
         $hashed = bcrypt($password, ['rounds' => 10]); // default 12 → ~200ms; 10 → ~50-100ms
 
-        $loginUrl = 'http://172.16.98.68:5173/';
+        $loginUrl = 'http://172.16.98.68:5173/'; //change this to domain name
         
         
         $exists = DB::table('users')->where('user_email', $request->email)->exists();
@@ -216,20 +216,34 @@ class CandidateController extends Controller
             ]);
 
             // Insert pipeline
-            DB::table('applicant_pipeline')->insert([
+            $pipelineId = DB::table('applicant_pipeline')->insertGetId([
                 'applicant_id'       => $candidateId,
                 'current_stage_id'   => 1,
                 'updated_by_user_id' => $creator,
-                'note'              => 'pending',
+                'note'               => 'pending',
                 'schedule_date'      => $request->assessmentDate,
                 'created_at'         => now(),
                 'updated_at'         => now(),
             ]);
 
+            DB::insert("
+                INSERT INTO applicant_pipeline_score 
+                    (applicant_pipeline_id, raw_score, overall_score, type, removed, created_at, updated_at) 
+                VALUES (?, 0, 0, 'exam_score', 0, NOW(), NOW())
+            ", [$pipelineId]);
+
             return $candidateId;
         });
 
         // -----------------------------
+        // 3️⃣ Queue assessment assignments asynchronously
+        //    - Use a job with bulk insert or upsert to avoid duplicates
+        // -----------------------------
+        if (!empty($request->assessments)) {
+            ProcessAssessmentsJob::dispatch($candidateId, $request->assessments, $creator);
+        }
+
+                // -----------------------------
         // 2️⃣ Queue email to Redis (async)
         // -----------------------------
         Mail::to($request->email)->queue(
@@ -241,13 +255,6 @@ class CandidateController extends Controller
             )
         );
 
-        // -----------------------------
-        // 3️⃣ Queue assessment assignments asynchronously
-        //    - Use a job with bulk insert or upsert to avoid duplicates
-        // -----------------------------
-        if (!empty($request->assessments)) {
-            ProcessAssessmentsJob::dispatch($candidateId, $request->assessments, $creator);
-        }
 
         // -----------------------------
         // 4️⃣ Return response immediately

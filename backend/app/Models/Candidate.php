@@ -85,4 +85,10 @@ class Candidate extends Model
     {
         return $this->hasOne(ApplicantPipeline::class, 'applicant_id');
     }
+
+    public function recruitmentNotes(): HasMany
+    {
+        return $this->hasMany(RecruitmentNote::class, 'applicant_id', 'id');
+    }
+
 }

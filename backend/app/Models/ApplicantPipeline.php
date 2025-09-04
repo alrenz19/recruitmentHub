@@ -33,4 +33,9 @@ class ApplicantPipeline extends Model
     {
         return $this->belongsTo(RecruitmentStage::class, 'current_stage_id');
     }
+
+    public function scores(): HasMany
+    {
+        return $this->hasMany(ApplicantPipelineScore::class, 'applicant_pipeline_id', 'id');
+    }
 }
