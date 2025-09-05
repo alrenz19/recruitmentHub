@@ -172,8 +172,6 @@ class AssessmentController extends Controller
      */
     public function store(Request $request)
     {
-        // $this->authorize('create', Assessment::class);
-
         $rules = [
             'title' => 'required|string|max:255',
             'description' => 'nullable|string',
@@ -181,8 +179,9 @@ class AssessmentController extends Controller
             'time_unit' => 'required|in:minutes,hours',
             'questions' => 'required|array|min:1',
             'questions.*.question_text' => 'required_without:questions.*.image|string|nullable',
-            'questions.*.question_type' => 'required|string',
+            'questions.*.question_type' => 'required|in:single_answer,multiple_answer,short_answer,enumeration',
             'questions.*.image' => 'nullable|string',
+
             'questions.*.options' => 'required|array|min:1',
             'questions.*.options.*.option_text' => 'required|string',
             'questions.*.options.*.is_correct' => 'required|boolean',
@@ -190,70 +189,90 @@ class AssessmentController extends Controller
 
         $validated = $request->validate($rules);
 
-        $assessment = Assessment::create([
-            'title' => $validated['title'],
-            'description' => $validated['description'] ?? null,
-            'time_allocated' => $validated['time_allocated'],
-            'time_unit' => $validated['time_unit'],
-            'created_by_user_id' =>  auth()->id() ?? 1,
-        ]);
+        DB::beginTransaction();
 
-        foreach ($validated['questions'] as $q) {
-            $imagePath = null;
-            if (!empty($q['image']) && preg_match('/^data:image\/(\w+);base64,/', $q['image'], $type)) {
-                $imageData = substr($q['image'], strpos($q['image'], ',') + 1);
-                $type = strtolower($type[1]);
-                $imageData = base64_decode($imageData);
-
-                $fileName = uniqid() . ".$type";
-                $storageDir = storage_path("app/public/assessments");
-                if (!file_exists($storageDir)) mkdir($storageDir, 0755, true);
-
-                $storagePath = $storageDir . "/$fileName";
-                file_put_contents($storagePath, $imageData);
-
-                $imagePath = "assessments/$fileName";
-            }
-
-            $question = AssessmentQuestion::create([
-                'assessment_id' => $assessment->id,
-                'question_text' => $q['question_text'] ?? null,
-                'question_type' => $q['question_type'],
-                'image_path' => $imagePath,
-                'removed' => 0,
+        try {
+            // Insert assessment
+            DB::insert("
+                INSERT INTO assessments (title, description, time_allocated, time_unit, created_by_user_id, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, NOW(), NOW())
+            ", [
+                $validated['title'],
+                $validated['description'] ?? null,
+                $validated['time_allocated'],
+                $validated['time_unit'],
+                auth()->id() ?? 1,
             ]);
 
-            foreach ($q['options'] as $opt) {
-                $question->options()->create([
-                    'option_text' => $opt['option_text'],
-                    'is_correct' => $opt['is_correct'],
-                    'removed' => 0,
+            $assessmentId = DB::getPdo()->lastInsertId();
+
+            // Insert questions
+            foreach ($validated['questions'] as $q) {
+                $imagePath = null;
+
+                if (!empty($q['image']) && preg_match('/^data:image\/(\w+);base64,/', $q['image'], $type)) {
+                    $imageData = substr($q['image'], strpos($q['image'], ',') + 1);
+                    $type = strtolower($type[1]);
+                    $imageData = base64_decode($imageData);
+
+                    $fileName = uniqid() . ".$type";
+                    $storageDir = storage_path("app/public/assessments");
+                    if (!file_exists($storageDir)) mkdir($storageDir, 0755, true);
+
+                    $storagePath = $storageDir . "/$fileName";
+                    file_put_contents($storagePath, $imageData);
+
+                    $imagePath = "assessments/$fileName";
+                }
+
+                // Insert question
+                DB::insert("
+                    INSERT INTO assessment_questions (assessment_id, question_text, question_type, image_path, removed, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, 0, NOW(), NOW())
+                ", [
+                    $assessmentId,
+                    $q['question_text'] ?? null,
+                    $q['question_type'],
+                    $imagePath,
                 ]);
+
+                $questionId = DB::getPdo()->lastInsertId();
+
+                // Insert options
+                foreach ($q['options'] as $opt) {
+                    DB::insert("
+                        INSERT INTO assessment_options (question_id, option_text, is_correct, removed, created_at, updated_at)
+                        VALUES (?, ?, ?, 0, NOW(), NOW())
+                    ", [
+                        $questionId,
+                        $opt['option_text'],
+                        $opt['is_correct'],
+                    ]);
+                }
             }
+
+            DB::commit();
+
+            // Invalidate cache
+            Cache::increment('assessments_cache_version');
+
+            return response()->json([
+                'message' => 'Assessment created successfully',
+                'assessment_id' => $assessmentId,
+            ]);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return response()->json(['error' => $e->getMessage()], 500);
         }
-
-        // Increment cache version to invalidate old cached lists
-        Cache::increment('assessments_cache_version');
-
-        return response()->json([
-            'message' => 'Assessment created successfully',
-            'assessment_id' => $assessment->id,
-        ]);
     }
+
 
     /**
      * Update the specified resource in storage.
      */
 
-    public function update(Request $request, $id) // Change this parameter
+    public function update(Request $request, $id)
     {
-        try {
-        // Find the assessment first
-        $assessment = Assessment::findOrFail($id);
-        
-        // Authorize updating this assessment
-        $this->authorize('update', $assessment);
-
         $rules = [
             'title' => 'required|string|max:255',
             'description' => 'nullable|string',
@@ -262,8 +281,9 @@ class AssessmentController extends Controller
             'questions' => 'required|array|min:1',
             'questions.*.id' => 'nullable|integer|exists:assessment_questions,id',
             'questions.*.question_text' => 'required_without:questions.*.image|string|nullable',
-            'questions.*.question_type' => 'required|string|in:single_answer,multiple_answer',
+            'questions.*.question_type' => 'required|in:single_answer,multiple_answer,short_answer,enumeration',
             'questions.*.image' => 'nullable|string',
+
             'questions.*.options' => 'required|array|min:1',
             'questions.*.options.*.id' => 'nullable|integer|exists:assessment_options,id',
             'questions.*.options.*.option_text' => 'required|string',
@@ -272,111 +292,142 @@ class AssessmentController extends Controller
 
         $validated = $request->validate($rules);
 
-        // Update main assessment fields
-        $assessment->update([
-            'title' => $validated['title'],
-            'description' => $validated['description'] ?? null,
-            'time_allocated' => $validated['time_allocated'],
-            'time_unit' => $validated['time_unit'],
-        ]);
+        DB::beginTransaction();
+        try {
+            // Update main assessment
+            DB::update("
+                UPDATE assessments
+                SET title = ?, description = ?, time_allocated = ?, time_unit = ?, updated_at = NOW()
+                WHERE id = ?
+            ", [
+                $validated['title'],
+                $validated['description'] ?? null,
+                $validated['time_allocated'],
+                $validated['time_unit'],
+                $id,
+            ]);
 
-        // Handle questions
-        $existingQuestionIds = $assessment->questions()->pluck('id')->toArray();
-        $sentQuestionIds = [];
+            // Get existing questions
+            $existingQuestionIds = DB::table('assessment_questions')
+                ->where('assessment_id', $id)
+                ->pluck('id')
+                ->toArray();
 
-        foreach ($validated['questions'] as $q) {
-            // Handle image
-            $imagePath = null;
+            $sentQuestionIds = [];
 
-            if (!empty($q['image']) && preg_match('/^data:image\/(\w+);base64,/', $q['image'], $type)) {
-                $imageData = substr($q['image'], strpos($q['image'], ',') + 1);
-                $type = strtolower($type[1]);
-                $imageData = base64_decode($imageData);
+            foreach ($validated['questions'] as $q) {
+                $imagePath = null;
 
-                $fileName = uniqid() . ".$type";
-                $storageDir = storage_path("app/public/assessments");
-                if (!file_exists($storageDir)) mkdir($storageDir, 0755, true);
+                if (!empty($q['image']) && preg_match('/^data:image\/(\w+);base64,/', $q['image'], $type)) {
+                    $imageData = substr($q['image'], strpos($q['image'], ',') + 1);
+                    $type = strtolower($type[1]);
+                    $imageData = base64_decode($imageData);
 
-                $storagePath = $storageDir . "/$fileName";
-                file_put_contents($storagePath, $imageData);
+                    $fileName = uniqid() . ".$type";
+                    $storageDir = storage_path("app/public/assessments");
+                    if (!file_exists($storageDir)) mkdir($storageDir, 0755, true);
 
-                $imagePath = "assessments/$fileName";
-            }
+                    $storagePath = $storageDir . "/$fileName";
+                    file_put_contents($storagePath, $imageData);
 
-            if (!empty($q['id']) && in_array($q['id'], $existingQuestionIds)) {
-                // Update existing question
-                $question = AssessmentQuestion::find($q['id']);
-                $question->update([
-                    'question_text' => $q['question_text'] ?? null,
-                    'question_type' => $q['question_type'],
-                    'image_path' => $imagePath ?: $question->image_path, // Keep existing if no new image
-                ]);
-            } else {
-                // Create new question (only if it's actually a new question)
-                $question = AssessmentQuestion::create([
-                    'assessment_id' => $assessment->id,
-                    'question_text' => $q['question_text'] ?? null,
-                    'question_type' => $q['question_type'],
-                    'image_path' => $imagePath,
-                    'removed' => 0,
-                ]);
-            }
-
-            $sentQuestionIds[] = $question->id;
-
-            // Handle options
-            $existingOptionIds = $question->options()->pluck('id')->toArray();
-            $sentOptionIds = [];
-
-            foreach ($q['options'] as $opt) {
-                if (!empty($opt['id']) && in_array($opt['id'], $existingOptionIds)) {
-                    // Update existing option
-                    $option = $question->options()->find($opt['id']);
-                    $option->update([
-                        'option_text' => $opt['option_text'],
-                        'is_correct' => $opt['is_correct'],
-                        'removed' => 0,
-                    ]);
-                } else {
-                    // Create new option
-                    $option = $question->options()->create([
-                        'option_text' => $opt['option_text'],
-                        'is_correct' => $opt['is_correct'],
-                        'removed' => 0,
-                    ]);
+                    $imagePath = "assessments/$fileName";
                 }
-                $sentOptionIds[] = $option->id;
+
+                if (!empty($q['id']) && in_array($q['id'], $existingQuestionIds)) {
+                    // Update existing question
+                    DB::update("
+                        UPDATE assessment_questions
+                        SET question_text = ?, question_type = ?, image_path = ?, updated_at = NOW()
+                        WHERE id = ?
+                    ", [
+                        $q['question_text'] ?? null,
+                        $q['question_type'],
+                        $imagePath ?? DB::table('assessment_questions')->where('id', $q['id'])->value('image_path'),
+                        $q['id'],
+                    ]);
+
+                    $questionId = $q['id'];
+                } else {
+                    // Insert new question
+                    DB::insert("
+                        INSERT INTO assessment_questions (assessment_id, question_text, question_type, image_path, removed, created_at, updated_at)
+                        VALUES (?, ?, ?, ?, 0, NOW(), NOW())
+                    ", [
+                        $id,
+                        $q['question_text'] ?? null,
+                        $q['question_type'],
+                        $imagePath,
+                    ]);
+
+                    $questionId = DB::getPdo()->lastInsertId();
+                }
+
+                $sentQuestionIds[] = $questionId;
+
+                // Handle options
+                $existingOptionIds = DB::table('assessment_options')
+                    ->where('question_id', $questionId)
+                    ->pluck('id')
+                    ->toArray();
+
+                $sentOptionIds = [];
+
+                foreach ($q['options'] as $opt) {
+                    if (!empty($opt['id']) && in_array($opt['id'], $existingOptionIds)) {
+                        // Update option
+                        DB::update("
+                            UPDATE assessment_options
+                            SET option_text = ?, is_correct = ?, removed = 0, updated_at = NOW()
+                            WHERE id = ?
+                        ", [
+                            $opt['option_text'],
+                            $opt['is_correct'],
+                            $opt['id'],
+                        ]);
+
+                        $optionId = $opt['id'];
+                    } else {
+                        // Insert option
+                        DB::insert("
+                            INSERT INTO assessment_options (question_id, option_text, is_correct, removed, created_at, updated_at)
+                            VALUES (?, ?, ?, 0, NOW(), NOW())
+                        ", [
+                            $questionId,
+                            $opt['option_text'],
+                            $opt['is_correct'],
+                        ]);
+
+                        $optionId = DB::getPdo()->lastInsertId();
+                    }
+
+                    $sentOptionIds[] = $optionId;
+                }
+
+                // Soft delete removed options
+                $deleteOptionIds = array_diff($existingOptionIds, $sentOptionIds);
+                if ($deleteOptionIds) {
+                    DB::table('assessment_options')->whereIn('id', $deleteOptionIds)->update(['removed' => 1]);
+                }
             }
 
-            // Delete removed options (soft delete)
-            $deleteOptionIds = array_diff($existingOptionIds, $sentOptionIds);
-            if ($deleteOptionIds) {
-                $question->options()->whereIn('id', $deleteOptionIds)->update(['removed' => 1]);
+            // Soft delete removed questions
+            $deleteQuestionIds = array_diff($existingQuestionIds, $sentQuestionIds);
+            if ($deleteQuestionIds) {
+                DB::table('assessment_questions')->whereIn('id', $deleteQuestionIds)->update(['removed' => 1]);
             }
+
+            DB::commit();
+
+            return response()->json([
+                'message' => 'Assessment updated successfully',
+                'assessment_id' => $id,
+            ]);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return response()->json(['error' => $e->getMessage()], 500);
         }
-
-        // Delete removed questions (soft delete)
-        $deleteQuestionIds = array_diff($existingQuestionIds, $sentQuestionIds);
-        if ($deleteQuestionIds) {
-            AssessmentQuestion::whereIn('id', $deleteQuestionIds)->update(['removed' => 1]);
-        }
-
-        return response()->json([
-            'message' => 'Assessment updated successfully',
-            'assessment' => $assessment->fresh()->load('questions.options'),
-        ]);
-
-    } catch (\Exception $e) {
-        \Log::error('Update assessment failed: ' . $e->getMessage(), [
-            'exception' => $e,
-            'request_data' => $request->all()
-        ]);
-        
-        return response()->json([
-            'message' => 'Update failed: ' . $e->getMessage()
-        ], 500);
     }
-}
+
 
 
     /**

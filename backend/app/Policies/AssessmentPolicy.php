@@ -43,7 +43,8 @@ class AssessmentPolicy
     public function update(User $user, Assessment $assessment): bool
     {
         // Only users with role_id 1, 2, or 3 and creator can update
-        return in_array($user->role_id, [1, 2, 3]) && $assessment->created_by_user_id === $user->id;
+        return $user->role_id === 1 // Admins can update any assessment
+        || in_array($user->role_id, [1, 2, 3]);
     }
 
     /**
@@ -52,7 +53,8 @@ class AssessmentPolicy
     public function delete(User $user, Assessment $assessment): bool
     {
         // Only users with role_id 1, 2, or 3 can delete (creator or any of those roles)
-        return in_array($user->role_id, [1, 2, 3]) && $assessment->created_by_user_id === $user->id;
+        return $user->role_id === 1 // Admins can update any assessment
+        || in_array($user->role_id, [1, 2, 3]);
     }
 
     /**
@@ -61,7 +63,7 @@ class AssessmentPolicy
     public function restore(User $user, Assessment $assessment): bool
     {
         // Only users with role_id 1, 2, or 3 can restore
-        return in_array($user->role_id, [1, 2, 3]) && $assessment->created_by_user_id === $user->id;
+        return in_array($user->role_id, [1, 2, 3]);
     }
 
     /**

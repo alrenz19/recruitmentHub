@@ -30,30 +30,30 @@ class AppServiceProvider extends ServiceProvider
         Schema::defaultStringLength(191);
         
         // Use our custom token model
-        Sanctum::usePersonalAccessTokenModel(PersonalAccessToken::class);
+        // Sanctum::usePersonalAccessTokenModel(PersonalAccessToken::class);
 
-        // Optional: globally map the authentication email field
-        User::saving(function ($user) {
-            if (isset($user->user_email)) {
-                $user->email = $user->user_email;
-            }
-        });
+        // // Optional: globally map the authentication email field
+        // User::saving(function ($user) {
+        //     if (isset($user->user_email)) {
+        //         $user->email = $user->user_email;
+        //     }
+        // });
 
-        // Optional: Hash password automatically when creating/updating user
-        User::creating(function ($user) {
-            if (isset($user->password_hash) && !Hash::needsRehash($user->password_hash)) {
-                $user->password_hash = Hash::make($user->password_hash);
-            }
-        });
+        // // Optional: Hash password automatically when creating/updating user
+        // User::creating(function ($user) {
+        //     if (isset($user->password_hash) && !Hash::needsRehash($user->password_hash)) {
+        //         $user->password_hash = Hash::make($user->password_hash);
+        //     }
+        // });
 
         // 🚀 Debug queries in local only
-        if ($this->app->environment('local')) {
-            DB::listen(function ($query) {
-                Log::info("SQL: {$query->sql}", [
-                    'bindings' => $query->bindings,
-                    'time'     => $query->time
-                ]);
-            });
-        }
+        // if ($this->app->environment('local')) {
+        //     DB::listen(function ($query) {
+        //         Log::info("SQL: {$query->sql}", [
+        //             'bindings' => $query->bindings,
+        //             'time'     => $query->time
+        //         ]);
+        //     });
+        // }
     }
 }
