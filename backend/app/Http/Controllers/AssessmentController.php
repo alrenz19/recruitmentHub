@@ -92,7 +92,7 @@ class AssessmentController extends Controller
                         'id' => $q->id,
                         'question_text' => $q->question_text,
                         'question_type' => $q->question_type,
-                        'image_path' => $q->image_path,
+                        'image_path' => url('storage/' . $q->image_path),
                         'options' => $options[$q->id] ?? [],
                     ];
                 });
@@ -279,13 +279,13 @@ class AssessmentController extends Controller
             'time_allocated' => 'required|integer|min:1',
             'time_unit' => 'required|in:minutes,hours',
             'questions' => 'required|array|min:1',
-            'questions.*.id' => 'nullable|integer|exists:assessment_questions,id',
+            'questions.*.id' => 'nullable|integer',
             'questions.*.question_text' => 'required_without:questions.*.image|string|nullable',
             'questions.*.question_type' => 'required|in:single_answer,multiple_answer,short_answer,enumeration',
             'questions.*.image' => 'nullable|string',
 
             'questions.*.options' => 'required|array|min:1',
-            'questions.*.options.*.id' => 'nullable|integer|exists:assessment_options,id',
+            'questions.*.options.*.id' => 'nullable|integer',
             'questions.*.options.*.option_text' => 'required|string',
             'questions.*.options.*.is_correct' => 'required|boolean',
         ];

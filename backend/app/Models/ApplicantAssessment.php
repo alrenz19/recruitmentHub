@@ -15,6 +15,7 @@ class ApplicantAssessment extends Model
         'assigned_by',
         'status',
         'removed',
+        'attempts_used',
     ];
 
     // Relationships
@@ -25,7 +26,7 @@ class ApplicantAssessment extends Model
 
     public function assessment()
     {
-        return $this->belongsTo(Assessment::class, 'assessment_id');
+        return $this->belongsTo(Examination::class, 'assessment_id');
     }
 
     public function assignedBy()

@@ -259,7 +259,7 @@ class CandidateController extends Controller
         // -----------------------------
         // 4️⃣ Return response immediately
         // -----------------------------
-        Cache::increment('candidates_cache_version');
+        // Cache::increment('candidates_cache_version');
 
         return response()->json([
             'success'      => true,

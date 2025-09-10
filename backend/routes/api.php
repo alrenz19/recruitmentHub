@@ -13,6 +13,9 @@ use App\Http\Controllers\CandidateController;
 use App\Http\Controllers\RecruitmentBoardController;
 use App\Http\Controllers\ScheduleController;
 use App\Http\Controllers\HRStaffController;
+use App\Http\Controllers\FileSubmissionController;
+use App\Http\Controllers\ExaminationController;
+use App\Http\Controllers\ApplicantSettingsController;
 
 
 
@@ -85,8 +88,8 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::get('/retrieve-assessments', [AssessmentController::class, 'retrieveAssessments']);
 
     Route::post('/assessments', [AssessmentController::class, 'store']);
-    Route::put('/assessments/{assessment}', [AssessmentController::class, 'update']);
-    Route::delete('/assessments/{assessment}', [AssessmentController::class, 'destroy']);
+    Route::put('/assessments/{id}', [AssessmentController::class, 'update']);
+    Route::delete('/assessments/{id}', [AssessmentController::class, 'destroy']);
 
     // Candidate routes
     Route::get('/candidates/{id}', [CandidateController::class, 'show']);
@@ -110,6 +113,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::delete('/hr-staff/{id}', [HRStaffController::class, 'destroy']);
 });
 
+
 // //route for submit request
 // Route::middleware(['auth:sanctum', 'verify.api', 'verify.role'])->group(function () {  
 //     // Assessment routes
@@ -121,6 +125,31 @@ Route::middleware(['auth:sanctum'])->group(function () {
 //     // Candidate routes
 //     Route::post('/candidates', [CandidateController::class, 'createCandidate']);
 // });
+
+Route::middleware(['auth:sanctum'])->group(function () {  
+    // Candidates Examination routes
+    Route::get('/applicant/examinations', [ExaminationController::class, 'retrieveAssignedAssessment']);
+    Route::post('/examinations/submit-all', [ExaminationController::class, 'submitAll']);
+    Route::get('/examinations', [ExaminationController::class, 'index']);
+    Route::get('/examinations/{id}', [ExaminationController::class, 'show']);
+    Route::post('/examinations', [ExaminationController::class, 'store']);
+    Route::post('/examinations/{id}/submit', [ExaminationController::class, 'submit']);
+    Route::put('/examinations/{id}', [ExaminationController::class, 'update']);
+    Route::delete('/examinations/{id}', [ExaminationController::class, 'destroy']);
+
+    // Candidates File Submit routes
+    Route::get('/file-submission', [FileSubmissionController::class, 'index']);
+    Route::post('/file-submission', [FileSubmissionController::class, 'store']);
+    Route::delete('/file-submission/{id}', [FileSubmissionController::class, 'destroy']);
+
+    //Candidates Settings routes
+    Route::post('/settings/profile', [ApplicantSettingsController::class, 'updateProfile']);
+    Route::post('/settings/change-email', [ApplicantSettingsController::class, 'changeEmail']);
+    Route::post('/settings/change-password', [ApplicantSettingsController::class, 'changePassword']);
+    Route::get('/settings/profile', [ApplicantSettingsController::class, 'getProfile']);
+
+});
+
 
 // -------------------------------
 // Catch-all route (must be at the end)
