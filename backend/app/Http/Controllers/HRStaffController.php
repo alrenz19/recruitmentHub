@@ -127,10 +127,10 @@ class HRStaffController extends Controller
     {
         $validated = $request->validate([
             'role_id'       => 'required|integer',
-            'user_email'    => "required|email|unique:users,user_email,{$id},id",
+            'user_email'    => "required|email",
             'password_hash' => 'nullable|string',
             'full_name'     => "required|string|max:150|unique:hr_staff,full_name,{$id},id",
-            'contact_email' => "required|email|unique:hr_staff,contact_email,{$id},id",
+            'contact_email' => "required|email",
         ]);
 
         try {

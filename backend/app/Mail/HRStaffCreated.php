@@ -27,7 +27,7 @@ class HRStaffCreated extends Mailable implements ShouldQueue
                     ->with([
                         'user_email' => $this->user_email,
                         'password'   => $this->password,
-                        'loginUrl'   => config('app.url'), // optional for button
+                        'loginUrl'   => request()->getSchemeAndHttpHost(), // optional for button
                     ]);
     }
 }

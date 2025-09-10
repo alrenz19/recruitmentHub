@@ -16,6 +16,8 @@ use App\Http\Controllers\HRStaffController;
 use App\Http\Controllers\FileSubmissionController;
 use App\Http\Controllers\ExaminationController;
 use App\Http\Controllers\ApplicantSettingsController;
+use App\Http\Controllers\JobOfferController;
+use App\Http\Controllers\NotificationController;
 
 
 
@@ -111,6 +113,18 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::post('/hr-staff', [HRStaffController::class, 'store']);
     Route::put('/hr-staff/{id}', [HRStaffController::class, 'update']);
     Route::delete('/hr-staff/{id}', [HRStaffController::class, 'destroy']);
+
+
+    // Job offer routes
+    Route::get('/job-offers', [JobOfferController::class, 'index']);
+    Route::get('/job-offers/chart', [JobOfferController::class, 'chartData']);
+    Route::get('/job-offers/{id}', [JobOfferController::class, 'show']);
+
+
+    // notification routes
+    Route::get('/notifications', [NotificationController::class, 'index']);
+    Route::patch('/notifications/{id}/read', [NotificationController::class, 'updateReadStatus']);
+    Route::delete('/notifications/{id}', [NotificationController::class, 'destroy']);
 });
 
 
