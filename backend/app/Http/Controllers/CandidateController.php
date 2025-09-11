@@ -42,7 +42,7 @@ class CandidateController extends Controller
         $perPage = $request->input('per_page', 10);
         $page = $request->input('page', 1);
 
-        $cacheVersion = Cache::get('candidates_cache_version', 1);
+        $cacheVersion = Cache::get('candidates_cache_version', 2);
 
         $filters = [
             'search' => $request->input('search'),
@@ -52,7 +52,7 @@ class CandidateController extends Controller
             'version' => $cacheVersion
         ];
 
-        $cacheKey = 'candidates_list_' . md5(json_encode($filters));
+        $cacheKey = 'candidates_list_v' . $cacheVersion;
 
         if ($request->boolean('refresh')) {
             Cache::forget($cacheKey);
@@ -190,8 +190,6 @@ class CandidateController extends Controller
             ], 409); // 409 Conflict
         }
 
-
-
         // -----------------------------
         // 1️⃣ Only essential DB inserts in transaction
         // -----------------------------
@@ -260,6 +258,12 @@ class CandidateController extends Controller
         // 4️⃣ Return response immediately
         // -----------------------------
         // Cache::increment('candidates_cache_version');
+
+        Cache::increment('candidates_cache_version');
+        $cacheVersion = Cache::get('candidates_cache_version', 2);
+        // Build cache key based on version and request parameters
+        $cacheKey = 'candidates_list_v' . $cacheVersion;
+        Cache::forget($cacheKey);
 
         return response()->json([
             'success'      => true,
@@ -362,6 +366,10 @@ class CandidateController extends Controller
 
             // 5️⃣ Increment cache version
             Cache::increment('candidates_cache_version');
+            $cacheVersion = Cache::get('candidates_cache_version', 2);
+            // Build cache key based on version and request parameters
+            $cacheKey = 'candidates_list_v' . $cacheVersion;
+            Cache::forget($cacheKey);
         });
 
         return response()->json([

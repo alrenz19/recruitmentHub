@@ -41,7 +41,7 @@ class AssessmentController extends Controller
             'version' => $cacheVersion
         ];
 
-        $cacheKey = 'assessments_list_' . md5(json_encode($filters));
+        $cacheKey = 'assessments_list_v' . $cacheVersion;
 
         if ($refresh) {
             Cache::forget($cacheKey);
@@ -129,24 +129,37 @@ class AssessmentController extends Controller
     }
 
 
-
-
-
     public function retrieveAssessments(Request $request)
     {
         $request->validate([
-            'per_page' => 'nullable|integer|min:1|max:100',
-            'last_id'  => 'nullable|integer|min:0',
+            'per_page'  => 'nullable|integer|min:1|max:100',
+            'last_id'   => 'nullable|integer|min:0',
+            'searchKey' => 'nullable|string|max:255',
         ]);
 
         $perPage = $request->input('per_page', 10);
-        $lastId = $request->input('last_id', 0);
+        $lastId  = $request->input('last_id', 0);
+        $search  = $request->input('searchKey');
 
-        // Fetch one extra to check for more
-        $data = DB::select(
-            'SELECT id, title FROM assessments WHERE removed = ? AND id > ? ORDER BY id ASC LIMIT ?',
-            [0, $lastId, $perPage + 1]
-        );
+        // Build base query
+        $query = 'SELECT DISTINCT id, title 
+                FROM assessments 
+                WHERE removed = ?';
+
+        $bindings = [0];
+
+        // Add search if provided
+        if (!empty($search)) {
+            $query .= ' AND title LIKE ?';
+            $bindings[] = '%' . $search . '%';
+        }
+
+        // Pagination
+        $query .= ' AND id > ? ORDER BY id ASC LIMIT ?';
+        $bindings[] = $lastId;
+        $bindings[] = $perPage + 1; // fetch extra to check "has_more"
+
+        $data = DB::select($query, $bindings);
 
         // Check if there are more rows
         $hasMore = count($data) > $perPage;
@@ -159,11 +172,13 @@ class AssessmentController extends Controller
         $newLastId = count($data) ? end($data)->id : null;
 
         return response()->json([
-            'data' => $data,
-            'last_id' => $newLastId,
+            'data'     => $data,
+            'last_id'  => $newLastId,
             'has_more' => $hasMore,
         ]);
     }
+
+
 
 
 
@@ -255,6 +270,10 @@ class AssessmentController extends Controller
 
             // Invalidate cache
             Cache::increment('assessments_cache_version');
+            $cacheVersion = Cache::get('assessments_cache_version', 1);
+            // Build cache key based on version and request parameters
+            $cacheKey = 'assessments_list_v' . $cacheVersion;
+            Cache::forget($cacheKey);
 
             return response()->json([
                 'message' => 'Assessment created successfully',
@@ -418,6 +437,13 @@ class AssessmentController extends Controller
 
             DB::commit();
 
+            // Invalidate cache
+            Cache::increment('assessments_cache_version');
+            $cacheVersion = Cache::get('assessments_cache_version', 1);
+            // Build cache key based on version and request parameters
+            $cacheKey = 'assessments_list_v' . $cacheVersion;
+            Cache::forget($cacheKey);
+
             return response()->json([
                 'message' => 'Assessment updated successfully',
                 'assessment_id' => $id,
@@ -443,6 +469,13 @@ class AssessmentController extends Controller
         
         // Use soft delete (set removed = 1) instead of hard delete
         $assessment->update(['removed' => 1]);
+
+        // Invalidate cache
+        Cache::increment('assessments_cache_version');
+        $cacheVersion = Cache::get('assessments_cache_version', 1);
+        // Build cache key based on version and request parameters
+        $cacheKey = 'assessments_list_v' . $cacheVersion;
+        Cache::forget($cacheKey);
 
         return response()->json(['message' => 'Assessment deleted successfully']);
     }

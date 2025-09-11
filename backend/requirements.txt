@@ -2,6 +2,7 @@ composer require predis/predis
 php artisan queue:work
 docker run -d --name redis -p 6379:6379 redis
 php artisan storage:link
+composer require pusher/pusher-php-server
 
 change the .env to redis
 
@@ -12,3 +13,5 @@ change the .env to redis
 DB::listen(function ($query) {
     logger($query->sql, $query->bindings, $query->time);
 });
+
+npm install pusher-js laravel-echo

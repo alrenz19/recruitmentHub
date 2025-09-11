@@ -18,6 +18,8 @@ use App\Http\Controllers\ExaminationController;
 use App\Http\Controllers\ApplicantSettingsController;
 use App\Http\Controllers\JobOfferController;
 use App\Http\Controllers\NotificationController;
+use App\Http\Controllers\ApplicantPipelineScoreController;
+use App\Http\Controllers\RecruitmentNoteController;
 
 
 
@@ -103,6 +105,10 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::get('/recruitment-board', [RecruitmentBoardController::class, 'getBoard']);
     Route::get('/recruitment-board/{stage}', [RecruitmentBoardController::class, 'getStageApplicants']);
     Route::get('/recruitment-board-details/{id}', [RecruitmentBoardController::class, 'getApplicantDetails']);
+    Route::patch('/applicant-pipeline/{id}/status', [RecruitmentBoardController::class, 'updateStatus']);
+    
+    // Score row
+    Route::post('/applicant-pipeline/score', [ApplicantPipelineScoreController::class, 'updateScore']);
 
     // Schedule routes
     Route::get('/schedules', [ScheduleController::class, 'index']);
@@ -119,12 +125,18 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::get('/job-offers', [JobOfferController::class, 'index']);
     Route::get('/job-offers/chart', [JobOfferController::class, 'chartData']);
     Route::get('/job-offers/{id}', [JobOfferController::class, 'show']);
+    Route::post('/job-offers', [JobOfferController::class, 'store']);
+    Route::patch('/job-offers/{id}/status', [JobOfferController::class, 'updateStatus']);
 
 
     // notification routes
     Route::get('/notifications', [NotificationController::class, 'index']);
     Route::patch('/notifications/{id}/read', [NotificationController::class, 'updateReadStatus']);
     Route::delete('/notifications/{id}', [NotificationController::class, 'destroy']);
+
+    // notes
+    Route::post('/recruitment-notes', [RecruitmentNoteController::class, 'store']);
+
 });
 
 

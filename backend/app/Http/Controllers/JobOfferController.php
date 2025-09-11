@@ -7,6 +7,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\Validator;
 
 class JobOfferController extends Controller
 {
@@ -78,8 +79,19 @@ class JobOfferController extends Controller
         ]);
     }
 
-    public function show($id)
+    public function show($applicantId)
     {
+        $validator = Validator::make(['applicantId' => $applicantId], [
+            'applicantId' => 'required|integer|exists:applicants,id'
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Invalid applicant ID',
+                'errors' => $validator->errors()
+            ], 422);
+        }
         $sql = "
             SELECT 
                 jo.id,
@@ -94,11 +106,11 @@ class JobOfferController extends Controller
                 jo.created_at
             FROM job_offers jo
             WHERE jo.removed = 0
-              AND jo.id = ?
+              AND jo.applicant_id = ?
             LIMIT 1
         ";
 
-        $offer = DB::selectOne($sql, [$id]);
+        $offer = DB::selectOne($sql, [$applicantId]);
 
         if (!$offer) {
             return response()->json(['message' => 'Job offer not found'], 404);
@@ -147,4 +159,215 @@ class JobOfferController extends Controller
 
         return response()->json($chartData);
     }
+
+    public function store(Request $request)
+    {
+        $validated = $request->validate([
+            'applicant_id' => 'required|integer',
+            'draft' => 'required|array',
+            'status' => 'required|in:pending_ceo,pending,approved,declined,accepted',
+            'signature' => 'nullable|string',
+        ]);
+
+        $creator = auth()->id();
+        $now = now();
+
+        // Check if applicant already has a job offer using parameter binding
+        $existingOffer = DB::table('job_offers')
+            ->where('applicant_id', $validated['applicant_id'])
+            ->first();
+
+        if ($existingOffer) {
+            return response()->json([
+                'message' => 'This applicant already has a job offer.',
+                'offer_id' => $existingOffer->id,
+            ], 409);
+        }
+
+        // Get HR staff id with parameter binding
+        $hrStaff = DB::table('hr_staff')->where('user_id', $creator)->first();
+        $hrStaffId = $hrStaff->id ?? 1;
+
+        // Get start date safely
+        $startDate = $validated['draft']['startDate'] ?? $now->format('Y-m-d');
+
+        // Convert draft to JSON safely
+        $offerDetailsJson = json_encode($validated['draft']);
+
+        // Handle signature with validation
+        $signaturePath = null;
+        if ($request->filled('signature')) {
+            $signatureData = $validated['signature'];
+            if (preg_match('/^data:image\/png;base64,/', $signatureData)) {
+                $signatureData = substr($signatureData, strpos($signatureData, ',') + 1);
+            }
+            
+            // Validate base64 data
+            if (base64_decode($signatureData, true) === false) {
+                return response()->json(['message' => 'Invalid signature data'], 422);
+            }
+            
+            $signatureData = base64_decode($signatureData);
+            $fileName = 'signatures/' . time() . '_' . $validated['applicant_id'] . '.png';
+            Storage::disk('public')->put($fileName, $signatureData);
+            $signaturePath = $fileName;
+        }
+
+        // Wrap in transaction
+        DB::transaction(function () use ($hrStaffId, $validated, $offerDetailsJson, $now, $creator, $startDate, $signaturePath) {
+            
+            // Insert job offer with parameter binding
+            $jobOfferId = DB::table('job_offers')->insertGetId([
+                'hr_id' => $hrStaffId,
+                'applicant_id' => $validated['applicant_id'],
+                'position' => $validated['draft']['position'] ?? '',
+                'offer_details' => $offerDetailsJson,
+                'status' => $validated['status'],
+                'signature_path' => $signaturePath,
+                'created_at' => $now,
+                'updated_at' => $now,
+            ]);
+
+            // Get pipeline ID first to avoid N+1 query
+            $pipeline = DB::table('applicant_pipeline')
+                ->where('applicant_id', $validated['applicant_id'])
+                ->first(['id']);
+
+            if ($pipeline) {
+                $pipelineId = $pipeline->id;
+
+                // Update applicant pipeline with parameter binding
+                DB::table('applicant_pipeline')
+                    ->where('id', $pipelineId)
+                    ->update([
+                        'schedule_date' => $startDate,
+                        'current_stage_id' => 4,
+                        'note' => 'Management Review',
+                        'updated_by_user_id' => $creator,
+                        'updated_at' => $now,
+                    ]);
+
+                // Mark old scores as removed in single query
+                DB::table('applicant_pipeline_score')
+                    ->where('applicant_pipeline_id', $pipelineId)
+                    ->update(['removed' => 1]);
+            } else {
+                // Handle case where pipeline doesn't exist (optional)
+                return response()->json(['message' => 'No pipeline found for applicant'], 409);
+            }
+        });
+
+        // Cache invalidation
+        Cache::increment('candidates_cache_version');
+        $cacheKey = 'board_data_v' . Cache::get('candidates_cache_version', 1);
+        Cache::forget($cacheKey);
+
+        return response()->json([
+            'message' => 'Job offer saved successfully.'
+        ]);
+    }
+
+
+    public function updateStatus(Request $request, $id)
+    {
+        $request->validate([
+            'status' => 'required|in:pending,approved,declined,accepted',
+            'management_comment' => 'nullable|string',
+        ]);
+
+        $now = now();
+        $updates = [];
+        $params = [];
+
+        $updates[] = "status = ?";
+        $params[] = $request->status;
+
+        if ($request->status === 'approved') {
+            $updates[] = "approved_at = ?";
+            $params[] = $now;
+        }
+
+        if ($request->status === 'declined') {
+            $updates[] = "declined_at = ?";
+            $params[] = $now;
+            $updates[] = "declined_reason = ?";
+            $params[] = $request->management_comment ?? null;
+        }
+
+        $params[] = $id;
+
+        $sql = "UPDATE job_offers SET " . implode(", ", $updates) . " WHERE id = ?";
+
+        DB::update($sql, $params);
+
+        return response()->json([
+            'message' => 'Job offer status updated successfully.'
+        ]);
+    }
+    //     public function show($applicantId)
+    // {
+    //     try {
+    //         // Validate that applicantId is a valid integer
+    //         $validator = Validator::make(['applicantId' => $applicantId], [
+    //             'applicantId' => 'required|integer|exists:applicants,id'
+    //         ]);
+
+    //         if ($validator->fails()) {
+    //             return response()->json([
+    //                 'success' => false,
+    //                 'message' => 'Invalid applicant ID',
+    //                 'errors' => $validator->errors()
+    //             ], 422);
+    //         }
+
+    //         // Get job offers for the applicant
+    //         $jobOffers = DB::table('job_offers as jo')
+    //             ->leftJoin('hr_staff as hr', 'jo.hr_id', '=', 'hr.id')
+    //             ->leftJoin('users as approved_by', 'jo.approved_by_user_id', '=', 'approved_by.id')
+    //             ->select(
+    //                 'jo.id',
+    //                 'jo.hr_id',
+    //                 'jo.applicant_id',
+    //                 'jo.position',
+    //                 'jo.offer_details',
+    //                 'jo.status',
+    //                 'jo.approved_by_user_id',
+    //                 'jo.approved_at',
+    //                 'jo.declined_reason',
+    //                 'jo.accepted_at',
+    //                 'jo.declined_at',
+    //                 'jo.signature_path',
+    //                 'jo.created_at',
+    //                 'jo.updated_at',
+    //                 DB::raw("CONCAT(hr.first_name, ' ', hr.last_name) as hr_name"),
+    //                 DB::raw("CONCAT(approved_by.first_name, ' ', approved_by.last_name) as approved_by_name")
+    //             )
+    //             ->where('jo.applicant_id', $applicantId)
+    //             ->where('jo.removed', 0)
+    //             ->orderBy('jo.created_at', 'desc')
+    //             ->get();
+
+    //         // Decode JSON offer_details for each job offer
+    //         $jobOffers->transform(function ($offer) {
+    //             if ($offer->offer_details) {
+    //                 $offer->offer_details = json_decode($offer->offer_details, true);
+    //             }
+    //             return $offer;
+    //         });
+
+    //         return response()->json([
+    //             'success' => true,
+    //             'data' => $jobOffers,
+    //             'message' => 'Job offers retrieved successfully'
+    //         ]);
+
+    //     } catch (\Exception $e) {
+    //         return response()->json([
+    //             'success' => false,
+    //             'message' => 'Failed to retrieve job offers',
+    //             'error' => $e->getMessage()
+    //         ], 500);
+    //     }
+    // }
+    
 }

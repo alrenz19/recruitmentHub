@@ -214,6 +214,8 @@ class RecruitmentBoardController extends Controller
                         c.full_name,
                         c.position_desired as position,
                         c.profile_picture as avatar,
+                        c.present_address as address,
+                        c.desired_salary as salary,
                         ap.id as pipeline_id,
                         ap.note as pipeline_note,
                         ap.schedule_date
@@ -245,35 +247,53 @@ class RecruitmentBoardController extends Controller
 
                 // Fetch scores
                 $scoresByPipeline = [];
+                $finalScores = [];
 
-                if (!empty($pipelineIds)) {
-                    $placeholders = implode(',', array_fill(0, count($pipelineIds), '?'));
-                    $bindings = array_merge($pipelineIds, [0, $this->scoreTypes[$stageName]]);
-                    
-                    $scoreRows = DB::select("
-                        SELECT 
-                            applicant_pipeline_id,
-                            type,
-                            raw_score,
-                            overall_score,
-                            (raw_score / overall_score) * 100 AS percentage
-                        FROM applicant_pipeline_score
-                        WHERE applicant_pipeline_id IN ($placeholders)
-                        AND removed = ?
-                        AND type = ?
-                    ", $bindings);
+            if (!empty($pipelineIds)) {
+                $placeholders = implode(',', array_fill(0, count($pipelineIds), '?'));
+                $bindings = array_merge($pipelineIds, [0, $this->scoreTypes[$stageName]]);
+                
+                $scoreRows = DB::select("
+                    SELECT 
+                        applicant_pipeline_id,
+                        type,
+                        raw_score,
+                        overall_score,
+                        CASE WHEN overall_score > 0 THEN (raw_score / overall_score) * 100 ELSE 0 END AS percentage
+                    FROM applicant_pipeline_score
+                    WHERE applicant_pipeline_id IN ($placeholders)
+                    AND removed = ?
+                    AND type = ?
+                ", $bindings);
 
-                    // ✅ Loop through rows directly
-                    foreach ($scoreRows as $s) {
-                        // Clamp percentage between 0 and 100
-                        $percentage = max(0, min(100, $s->percentage ?? 0));
+                foreach ($scoreRows as $s) {
+                    $pipelineId = $s->applicant_pipeline_id;
 
-                        $scoresByPipeline[$s->applicant_pipeline_id][] = [
-                            'text'  => ucfirst(str_replace('_', ' ', $this->scoreTypes[$stageName])) . ':',
-                            'value' => $percentage
-                        ];
+                    if (!isset($scoresByPipeline[$pipelineId])) {
+                        $scoresByPipeline[$pipelineId] = [];
                     }
+
+                    $scoresByPipeline[$pipelineId][] = $s->raw_score; // just collect raw scores
                 }
+
+                // Calculate final score to sum to 100
+                foreach ($scoresByPipeline as $pipelineId => $rawScores) {
+                    $numInterviewers = count($rawScores);
+                    $finalScore = 0;
+
+                    if ($numInterviewers > 0) {
+                        $weight = 100 / $numInterviewers;
+                        foreach ($rawScores as $score) {
+                            $finalScore += ($score * $weight / 100);
+                        }
+                    }
+
+                    $finalScores[$pipelineId][] = [
+                        'text'  => ucfirst(str_replace('_', ' ', $this->scoreTypes[$stageName])) . ':',
+                        'value' => round($finalScore, 2), // final weighted score
+                    ];
+                }
+            }
                 // Fetch notes
                 $notesByApplicant = [];
                 if (!empty($applicantIds)) {
@@ -307,11 +327,14 @@ class RecruitmentBoardController extends Controller
 
                     $cards[] = [
                         'id' => $row->id,
+                        'pipeline_id'=> $row->pipeline_id,
                         'name' => $row->full_name ?? '',
                         'position' => $row->position ?? '',
                         'avatar' => $row->avatar ?? '',
+                        'address' => $row->address ?? '',
+                        'salary' => $row->salary ?? '',
                         'notes' => $notesByApplicant[$row->id] ?? [],
-                        'progress' => $scoresByPipeline[$row->pipeline_id] ?? [],
+                        'progress' => $finalScores[$row->pipeline_id] ?? [],
                         'tags' => $tags,
                         'date' => $row->schedule_date ?? '',
                     ];
@@ -331,6 +354,15 @@ class RecruitmentBoardController extends Controller
 
     public function getApplicantDetails($applicantId)
     {
+        $creatorUserId = auth()->id();
+
+        // Get HR staff record for the current user
+        $hrStaff = DB::table('hr_staff')
+            ->where('user_id', $creatorUserId)
+            ->first();
+
+        $hrStaffId = $hrStaff->id ?? 1;
+
         $row = DB::selectOne("
             SELECT 
                 -- Files
@@ -361,13 +393,35 @@ class RecruitmentBoardController extends Controller
                     CONCAT('[', GROUP_CONCAT(
                         DISTINCT JSON_OBJECT(
                             'stage', IFNULL(rs.stage_name, ''),
-                            'date', ap.schedule_date,
+                            'date', IFNULL(ap.schedule_date, ''),
                             'platforms', IFNULL(ap.platforms, ''),
                             'participants', IFNULL(pt.participants_list, '[]')
                         )
                     SEPARATOR ','), ']'),
                     '[]'
-                ) AS schedules
+                ) AS schedules,
+
+                -- HR inputted score (returns empty if not scored yet)
+                IFNULL(
+                    (SELECT aps.raw_score
+                    FROM applicant_pipeline_score aps
+                    WHERE aps.applicant_pipeline_id = ap.id
+                    AND aps.interviewer_id = ?
+                    AND aps.type = LOWER(REPLACE(rs.stage_name, ' ', '_')) COLLATE utf8mb4_general_ci
+                    AND aps.removed = 0
+                    LIMIT 1),
+                    ''
+                ) AS my_input_score,
+
+                -- Job offer checker
+                IFNULL(
+                    (SELECT 1 
+                    FROM job_offers jo 
+                    WHERE jo.applicant_id = a.id 
+                    AND jo.removed = 0 
+                    LIMIT 1),
+                    0
+                ) AS has_job_offer
 
             FROM applicants a
             LEFT JOIN applicant_files af
@@ -393,13 +447,43 @@ class RecruitmentBoardController extends Controller
                 GROUP BY applicant_pipeline_id
             ) pt ON pt.applicant_pipeline_id = ap.id
             WHERE a.id = ?
-            GROUP BY a.id
-        ", [$applicantId]);
+            GROUP BY a.id,ap.id, rs.stage_name
+        ", [$hrStaffId, $applicantId]);
 
         return response()->json([
             'files' => json_decode($row->files, true),
             'assessments' => json_decode($row->assessments, true),
             'schedules' => json_decode($row->schedules, true),
+            'input_score' => $row->my_input_score,
+            'has_job_offer' => (bool)$row->has_job_offer
+        ]);
+    }
+
+
+    public function updateStatus(Request $request, $id)
+    {
+        $creator = auth()->id(); 
+
+        $request->validate([
+            'note' => 'nullable|string',
+        ]);
+
+        // 🔹 Run raw SQL update
+        DB::update("
+            UPDATE applicant_pipeline 
+            SET updated_by_user_id = ?, note = ?
+            WHERE applicant_id = ? AND removed = 0
+        ", [$creator, $request->note, $id]);
+
+        // 🚀 Invalidate board cache by bumping version
+        Cache::increment('candidates_cache_version');
+        $cacheVersion = Cache::get('candidates_cache_version', 1);
+        // Build cache key based on version and request parameters
+        $cacheKey = 'board_data_v' . $cacheVersion;
+        Cache::forget($cacheKey);
+
+        return response()->json([
+            'message' => 'Pipeline updated successfully',
         ]);
     }
 }
