@@ -255,6 +255,30 @@ class JobOfferController extends Controller
                 // Handle case where pipeline doesn't exist (optional)
                 return response()->json(['message' => 'No pipeline found for applicant'], 409);
             }
+
+            DB::afterCommit(function () use ($jobOfferId, $validated, $hrStaffId) {
+                 // Get applicant and HR info
+                $applicant = DB::table('applicants')->where('id', $validated['applicant_id'])->first();
+                $hrStaff = DB::table('hr_staff')->where('id', $hrStaffId)->first();
+
+                // Top management emails (can be a config or DB query)
+                $managementEmails = DB::table('users')
+                    ->where('role_id', 5) // or 'approver', etc.
+                    ->pluck('email');
+
+                foreach ($managementEmails as $email) {
+                    Mail::to($email)
+                        ->queue(new \App\Mail\JobOfferApprovalMail(
+                            $applicant->full_name,
+                            $validated['draft']['position'] ?? '',
+                            $validated['draft']['department'] ?? '',
+                            $hrStaff->name ?? 'HR Staff',
+                            $jobOfferId,
+                            route('recruitment-board', ['id' => $jobOfferId])
+                        ));
+                }
+            });
+
         });
 
         // Cache invalidation

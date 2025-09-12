@@ -15,3 +15,5 @@ DB::listen(function ($query) {
 });
 
 npm install pusher-js laravel-echo
+npm install lodash.debounce
+npm install react-signature-canvas

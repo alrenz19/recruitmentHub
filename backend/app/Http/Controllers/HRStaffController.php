@@ -225,4 +225,25 @@ class HRStaffController extends Controller
             return response()->json(['error' => $e->getMessage()], 500);
         }
     }
+
+    public function search(Request $request)
+    {
+        $q = $request->query('q', '');
+
+        if (strlen($q) < 2) {
+            return response()->json([]);
+        }
+
+        $results = DB::select("
+            SELECT id, full_name, contact_email
+            FROM hr_staff
+            WHERE removed = 0 
+            AND (full_name LIKE ?)
+            LIMIT 5
+        ", ["%$q%"]);
+
+        return response()->json($results);
+    }
+
+
 }

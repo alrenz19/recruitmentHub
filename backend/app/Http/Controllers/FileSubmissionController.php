@@ -7,6 +7,7 @@ use App\Models\ApplicantFiles;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
+use App\Services\NotificationService;
 
 class FileSubmissionController extends Controller
 {
@@ -37,7 +38,10 @@ class FileSubmissionController extends Controller
             'file_name' => 'required|string|max:255',
         ]);
 
-        $applicantId = Auth::user()->applicant->id ?? null;
+        $userId = Auth::id();
+        $applicant = DB::table('applicants')->where('user_id', $userId)->first();
+        $applicantId = $applicant->id ?? null;
+
         if (!$applicantId) {
             return response()->json(['error' => 'Applicant not found'], 404);
         }
@@ -53,6 +57,8 @@ class FileSubmissionController extends Controller
             'status' => 'pending',
             'removed' => 0,
         ]);
+
+         NotificationService::send(null, "Attachment Uploaded", "{$applicant->full_name} has uploaded a file.", 'file', '/recruitment-board', 'hr');
 
         return response()->json([
             'message' => 'File uploaded successfully',

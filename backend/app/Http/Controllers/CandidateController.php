@@ -179,7 +179,9 @@ class CandidateController extends Controller
         // Optional: reduce bcrypt cost to speed up HTTP response
         $hashed = bcrypt($password, ['rounds' => 10]); // default 12 → ~200ms; 10 → ~50-100ms
 
-        $loginUrl = request()->getSchemeAndHttpHost(); //change this to domain name
+        $host = request()->getHost();      // e.g. 172.16.98.32
+        $scheme = request()->getScheme();  // http
+        $loginUrl = $scheme . '://' . $host . ':5173';
         
         
         $exists = DB::table('users')->where('user_email', $request->email)->exists();

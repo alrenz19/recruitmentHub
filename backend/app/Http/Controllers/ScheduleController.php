@@ -5,6 +5,10 @@ namespace App\Http\Controllers;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Cache;
+use App\Mail\ApplicantScheduleMail;
+use App\Mail\ParticipantScheduleMail;
+use Illuminate\Support\Facades\Mail;
+use App\Services\NotificationService;
 
 class ScheduleController extends Controller
 {
@@ -70,13 +74,16 @@ class ScheduleController extends Controller
             'stage'        => 'required|string',
             'date'         => 'required|date',
             'time'         => 'required',
-            'participants' => 'nullable|string', // comma-separated
+            'mode'         => 'required|in:Face-to-Face,Online',
+            'link'         => 'nullable|string',
+            'participants' => 'nullable|array',
+            'participants.*.id'    => 'required|integer',
+            'participants.*.name'  => 'required|string',
+            'participants.*.email' => 'required|email',
         ]);
 
-        // Combine date + time
         $scheduleDateTime = $validated['date'] . ' ' . $validated['time'];
 
-        // Get stage ID
         $stage = DB::selectOne(
             "SELECT id FROM recruitment_stages WHERE stage_name = ? LIMIT 1",
             [$validated['stage']]
@@ -86,8 +93,16 @@ class ScheduleController extends Controller
             return response()->json(['message' => 'Invalid stage provided'], 422);
         }
 
-        DB::transaction(function () use ($validated, $scheduleDateTime, $stage, $creator) {
-            // Update applicant_pipeline
+        // Validate meeting link for online interviews
+        if ($validated['mode'] === 'Online' && empty($validated['link'])) {
+            return response()->json(['message' => 'Meeting link is required for online interviews'], 422);
+        }
+
+        $participants = [];
+        $applicant = null;
+
+        DB::transaction(function () use ($validated, $scheduleDateTime, $stage, $creator, &$participants, &$applicant) {
+            // Update pipeline
             $updated = DB::update(
                 "UPDATE applicant_pipeline
                 SET schedule_date = ?, current_stage_id = ?, note = 'Pending', updated_by_user_id = ?, updated_at = NOW()
@@ -104,34 +119,71 @@ class ScheduleController extends Controller
                 throw new \Exception('No pipeline found for this applicant');
             }
 
-            // Get pipeline ID
             $pipelineId = DB::table('applicant_pipeline')
                             ->where('applicant_id', $validated['applicant_id'])
                             ->value('id');
 
-
-            // **Mark old scores as removed**
             DB::table('applicant_pipeline_score')
                 ->where('applicant_pipeline_id', $pipelineId)
                 ->update(['removed' => 1]);
 
-            // Delete old participants
             DB::table('participants')->where('applicant_pipeline_id', $pipelineId)->delete();
 
-            // Insert new participants
-            $participantNames = array_filter(array_map('trim', explode(',', $validated['participants'] ?? '')));
-            foreach ($participantNames as $name) {
-                DB::table('participants')->insert([
-                    'applicant_pipeline_id' => $pipelineId,
-                    'name'                  => $name,
-                    'removed'               => 0,
-                ]);
+            if (!empty($validated['participants'])) {
+                foreach ($validated['participants'] as $p) {
+                    DB::table('participants')->insert([
+                        'applicant_pipeline_id' => $pipelineId,
+                        'name'                  => $p['name'],
+                        'removed'               => 0,
+                    ]);
+                    $participants[] = $p;
+                }
             }
+
+            DB::table('recruitment_notes')
+                ->where('applicant_id', $validated['applicant_id'])
+                ->update(['removed' => 1]);
+
+            $applicant = DB::table('applicants')->where('id', $validated['applicant_id'])->first();
+            $mode = $validated['mode'] === 'Face-to-Face' ? 'Face to Face' : 'Online';
+            $link = $validated['link'] ?? null;
+            // ✅ Queue emails only after commit
+            DB::afterCommit(function () use ($applicant, $validated, $participants, $scheduleDateTime, $mode, $link) {
+                if ($applicant) {
+                    Mail::to($applicant->email)
+                        ->queue(new ApplicantScheduleMail(
+                            $applicant->full_name,
+                            $validated['stage'],
+                            $validated['date'],
+                            $validated['time'],
+                            array_map(fn($p) => $p['name'], $participants),
+                            $mode?? null,
+                            $link ?? null
+                        ));
+
+                    foreach ($participants as $p) {
+                        Mail::to($p['email'])
+                            ->queue(new ParticipantScheduleMail(
+                                $p['name'],
+                                $applicant->full_name,
+                                $applicant->position_desired,
+                                $scheduleDateTime,
+                                $validated['stage'],
+                                $mode ?? null,
+                                $link ?? null
+                            ));
+                    }
+
+                    $message = "You have a new scheduled interview for {$validated['stage']} on {$validated['date']} at {$validated['time']} with toyoflex.";
+
+                    NotificationService::send($applicant->user_id, "New Scheduled", $message, 'assessment', '/dashboard');
+                }
+                
+            });
         });
 
         Cache::increment('candidates_cache_version');
         $cacheVersion = Cache::get('candidates_cache_version', 1);
-        // Build cache key based on version and request parameters
         $cacheKey = 'board_data_v' . $cacheVersion;
         Cache::forget($cacheKey);
 
@@ -139,6 +191,7 @@ class ScheduleController extends Controller
             'message' => 'Pipeline, schedule, and participants updated successfully',
         ]);
     }
+
 
 
 }

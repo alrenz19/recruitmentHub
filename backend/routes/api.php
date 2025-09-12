@@ -20,6 +20,8 @@ use App\Http\Controllers\JobOfferController;
 use App\Http\Controllers\NotificationController;
 use App\Http\Controllers\ApplicantPipelineScoreController;
 use App\Http\Controllers\RecruitmentNoteController;
+use App\Http\Controllers\ChatController;
+use App\Http\Controllers\UserPrivacyController;
 
 
 
@@ -59,6 +61,8 @@ Route::post('/logout', [AuthController::class, 'logout']);
 //     Route::post('/logout', [AuthController::class, 'logout']);
 // });
 
+
+
 Route::middleware(['auth:sanctum'])->get('/check-auth', function (Request $request) {
 
     $userId = $request->user()->id;
@@ -70,6 +74,7 @@ Route::middleware(['auth:sanctum'])->get('/check-auth', function (Request $reque
             'id' => $u->id,
             'role_id' => $u->role_id,
             'full_name' => $u->full_name,
+            'accept_privacy_policy' => $u->accept_privacy_policy === 0 ? false : true
         ];
     });
 
@@ -119,6 +124,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::post('/hr-staff', [HRStaffController::class, 'store']);
     Route::put('/hr-staff/{id}', [HRStaffController::class, 'update']);
     Route::delete('/hr-staff/{id}', [HRStaffController::class, 'destroy']);
+    Route::get('/participants/search', [HRStaffController::class, 'search']);
 
 
     // Job offer routes
@@ -137,6 +143,15 @@ Route::middleware(['auth:sanctum'])->group(function () {
     // notes
     Route::post('/recruitment-notes', [RecruitmentNoteController::class, 'store']);
 
+    // chat
+    Route::get('/chat/history/{applicantId}', [ChatController::class, 'history']);
+    Route::post('/chat/send', [ChatController::class, 'send']);
+    Route::post('/chat/typing', [ChatController::class, 'typing']);
+    Route::get('/chat/contacts', [ChatController::class, 'contacts']);
+
+
+    Route::get('/chat/applicant-history/', [ChatController::class, 'ApplicantChatHistory']);
+    Route::post('/chat/applicant-send', [ChatController::class, 'ApplicantChatSend']);
 });
 
 
@@ -153,6 +168,9 @@ Route::middleware(['auth:sanctum'])->group(function () {
 // });
 
 Route::middleware(['auth:sanctum'])->group(function () {  
+    // Data Privacy update
+    Route::patch('/users/privacy/accept', [UserPrivacyController::class, 'acceptPrivacyPolicy']);
+
     // Candidates Examination routes
     Route::get('/applicant/examinations', [ExaminationController::class, 'retrieveAssignedAssessment']);
     Route::post('/examinations/submit-all', [ExaminationController::class, 'submitAll']);

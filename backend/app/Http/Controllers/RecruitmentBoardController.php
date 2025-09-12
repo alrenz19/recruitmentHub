@@ -8,6 +8,7 @@ use App\Models\Candidate;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Cache;
+use App\Services\NotificationService;
 
 class RecruitmentBoardController extends Controller
 {
@@ -474,6 +475,8 @@ class RecruitmentBoardController extends Controller
             SET updated_by_user_id = ?, note = ?
             WHERE applicant_id = ? AND removed = 0
         ", [$creator, $request->note, $id]);
+
+        NotificationService::send($creator, "Application Status Updated", 'congratulations! 🎉 You’re qualify to the next step of the application process.', 'general', '/dashboard');
 
         // 🚀 Invalidate board cache by bumping version
         Cache::increment('candidates_cache_version');

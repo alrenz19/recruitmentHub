@@ -15,6 +15,7 @@ use Illuminate\Foundation\Auth\Access\AuthorizesRequests;
 use Illuminate\Foundation\Bus\DispatchesJobs;
 use Illuminate\Foundation\Validation\ValidatesRequests;
 use Illuminate\Support\Facades\DB;
+use App\Services\NotificationService;
 
 class ExaminationController extends Controller
 {
@@ -124,7 +125,8 @@ class ExaminationController extends Controller
     public function submitAll(Request $request)
     {
         $userId = Auth::id();
-        $applicantId = DB::table('applicants')->where('user_id', $userId)->value('id');
+        $applicant = DB::table('applicants')->where('user_id', $userId)->first();
+        $applicantId = $applicant->id ?? null;
 
         if (!$applicantId) {
             return response()->json(['error' => 'Applicant not found'], 404);
@@ -214,6 +216,8 @@ class ExaminationController extends Controller
             }
 
             DB::commit();
+
+            NotificationService::send(null, "Assessment Result", "{$applicant->full_name} has completed their assessment.", 'assessment', '/recruitment-board', 'hr');
 
             return response()->json([
                 'message' => 'All exams submitted successfully',
