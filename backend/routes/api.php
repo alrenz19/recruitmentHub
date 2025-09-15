@@ -22,6 +22,8 @@ use App\Http\Controllers\ApplicantPipelineScoreController;
 use App\Http\Controllers\RecruitmentNoteController;
 use App\Http\Controllers\ChatController;
 use App\Http\Controllers\UserPrivacyController;
+use App\Http\Controllers\ApplicantDashboardController;
+use App\Http\Controllers\ApplicantNotificationController;
 
 
 
@@ -171,6 +173,11 @@ Route::middleware(['auth:sanctum'])->group(function () {
     // Data Privacy update
     Route::patch('/users/privacy/accept', [UserPrivacyController::class, 'acceptPrivacyPolicy']);
     Route::post('/job-application', [UserPrivacyController::class, 'store'])->middleware('verify.recaptcha');
+    // Dashboard stats
+    Route::get('/applicant-dashboard', [ApplicantDashboardController::class, 'index']);
+
+    // Candidates Notification
+    Route::get('/applicant-notifications', [ApplicantNotificationController::class, 'index']);
 
     // Candidates Examination routes
     Route::get('/applicant/examinations', [ExaminationController::class, 'retrieveAssignedAssessment']);

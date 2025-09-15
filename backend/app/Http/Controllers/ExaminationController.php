@@ -142,6 +142,8 @@ class ExaminationController extends Controller
         ]);
 
         $allResults = [];
+        $totalScore = 0;      // ✅ raw score across all exams
+        $totalQuestions = 0;  // ✅ total questions across all exams
 
         DB::beginTransaction();
         try {
@@ -159,9 +161,9 @@ class ExaminationController extends Controller
 
                     // Delete existing answers
                     DB::table('assessment_answers')
-                    ->where('applicant_id', $applicantId)
-                    ->where('question_id', $ans['question_id'])
-                    ->delete();
+                        ->where('applicant_id', $applicantId)
+                        ->where('question_id', $ans['question_id'])
+                        ->delete();
 
                     // Insert new answers
                     foreach ($submittedOptions as $optId) {
@@ -206,6 +208,11 @@ class ExaminationController extends Controller
                         'reviewed_at' => now(),
                     ]
                 );
+                
+                // increment attempts_used
+                ApplicantAssessment::where('applicant_id', $applicantId)
+                    ->where('assessment_id', $examId)
+                    ->increment('attempts_used');
 
                 $allResults[] = [
                     'assessment_id' => $examId,
@@ -213,6 +220,27 @@ class ExaminationController extends Controller
                     'total' => $total,
                     'status' => ($score >= ($total * 0.5)) ? 'passed' : 'failed',
                 ];
+
+                // ✅ add to overall score
+                $totalScore += $score;
+                $totalQuestions += $total;
+            }
+
+            // ✅ Insert into applicant_pipeline_score
+            $pipelineId = DB::table('applicant_pipeline')
+                ->where('applicant_id', $applicantId)
+                ->value('id');
+
+            if ($pipelineId) {
+                DB::table('applicant_pipeline_score')->insert([
+                    'applicant_pipeline_id' => $pipelineId,
+                    'raw_score' => $totalScore,
+                    'overall_score' => $totalQuestions,
+                    'type' => 'exam_score',
+                    'removed' => 0,
+                    'created_at' => now(),
+                    'updated_at' => now(),
+                ]);
             }
 
             DB::commit();
@@ -222,12 +250,17 @@ class ExaminationController extends Controller
             return response()->json([
                 'message' => 'All exams submitted successfully',
                 'results' => $allResults,
+                'pipeline_score' => [
+                    'raw_score' => $totalScore,
+                    'overall_score' => $totalQuestions,
+                ]
             ]);
         } catch (\Exception $e) {
             DB::rollBack();
             return response()->json(['error' => $e->getMessage()], 500);
         }
     }
+
 
 
 
