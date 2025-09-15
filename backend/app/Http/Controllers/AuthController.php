@@ -54,6 +54,7 @@ class AuthController extends Controller
                 'id'        => $user->id,
                 'role_id'   => $user->role_id,
                 'full_name' => $user->full_name,
+                'user_email'     => $user->user_email,
                 'accept_privacy_policy' => $user->accept_privacy_policy == 0 ? false : true
             ],
             'token' => $token

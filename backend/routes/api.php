@@ -170,6 +170,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
 Route::middleware(['auth:sanctum'])->group(function () {  
     // Data Privacy update
     Route::patch('/users/privacy/accept', [UserPrivacyController::class, 'acceptPrivacyPolicy']);
+    Route::post('/job-application', [UserPrivacyController::class, 'store'])->middleware('verify.recaptcha');
 
     // Candidates Examination routes
     Route::get('/applicant/examinations', [ExaminationController::class, 'retrieveAssignedAssessment']);
@@ -191,6 +192,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::post('/settings/change-email', [ApplicantSettingsController::class, 'changeEmail']);
     Route::post('/settings/change-password', [ApplicantSettingsController::class, 'changePassword']);
     Route::get('/settings/profile', [ApplicantSettingsController::class, 'getProfile']);
+    
 
 });
 

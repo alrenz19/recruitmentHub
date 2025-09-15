@@ -19,5 +19,22 @@ class DatabaseSeeder extends Seeder
             'name' => 'Test User',
             'email' => 'test@example.com',
         ]);
+
+        $levels = [
+            ['name' => 'Elementary'],
+            ['name' => 'High School'],
+            ['name' => 'Senior High'],
+            ['name' => 'Vocational'],
+            ['name' => 'College/University'],
+            ['name' => 'Graduate School']
+        ];
+
+        foreach ($levels as $level) {
+            DB::table('academic_level')->insert([
+                'name' => $level['name'],
+                'created_at' => now(),
+                'updated_at' => now()
+            ]);
+        }
     }
 }
