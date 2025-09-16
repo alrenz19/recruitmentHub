@@ -8,6 +8,7 @@ use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
+use Illuminate\Support\Facades\Storage;
 
 class UserPrivacyController extends Controller
 {
@@ -38,18 +39,14 @@ class UserPrivacyController extends Controller
         }
     }
 
-    public function store(Request $request)
+     public function store(Request $request)
     {
-        $userId = Auth::id(); // get currently logged-in user ID
-
+        $userId = Auth::id();
         if (!$userId) {
-            return response()->json([
-                'message' => 'Unauthorized'
-            ], 401);
+            return response()->json(['message' => 'Unauthorized'], 401);
         }
 
-        // Validate the request (reCAPTCHA is handled by middleware)
-        $validator = Validator::make($request->all(), [
+        $rules = [
             'position_desired' => 'required|string|max:100',
             'full_name' => 'required|string|max:255',
             'birth_date' => 'required|date',
@@ -59,269 +56,332 @@ class UserPrivacyController extends Controller
             'provincial_address' => 'required|string|max:100',
             'email' => 'required|email|max:255',
             'phone' => 'required|string|max:50',
+            'age' => 'required|string|max:50',
+            'gender' => 'required|string|max:50',
             'religion' => 'nullable|string|max:100',
             'nationality' => 'required|string|max:100',
             'job_sources' => 'required|string',
-            'emergency_contact' => 'required|string',
-            'family_background' => 'required|string',
-            'education_background' => 'required|string',
-            'employment_history' => 'required|string',
-            'additional_information' => 'required|string',
-            'signature' => 'nullable|string',
-            'profile_picture' => 'nullable|string',
+            'emergency_contact' => 'required|array',
+            'family_background' => 'required|array',
+            'education_background' => 'required|array',
+            'employment_history' => 'required|array',
+            'additional_information' => 'required|array',
+            'profile_picture' => 'nullable|string', // base64
+            'resume' => 'nullable|string',          // base64
+            'signature' => 'nullable|string',       // base64
             'licensure_exam' => 'nullable|string',
             'license_no' => 'nullable|string',
             'extra_curricular' => 'nullable|string',
-        ]);
+        ];
 
-        if ($validator->fails()) {
-            return response()->json([
-                'success' => false,
-                'errors' => $validator->errors()
-            ], 422);
-        }
+        $validated = $request->validate($rules);
 
         DB::beginTransaction();
-
         try {
-            $data = $request->all();
-            
-            // Check if applicant already exists
-            $existingApplicant = DB::table('applicants')
+            // Handle job_sources
+            $jobSource = $validated['job_sources'];
+            $jobInfoId = DB::table('job_information_source')->updateOrInsert(
+                ['name' => $jobSource, 'removed' => 0],
+                ['updated_at' => now(), 'created_at' => now()]
+            );
+
+            $jobInfoId = DB::table('job_information_source')
+                ->where('name', $jobSource)
+                ->where('removed', 0)
+                ->value('id');
+
+            $applicant = DB::table('applicants')
                 ->where('user_id', $userId)
                 ->first();
 
-            // Decode JSON strings from the payload
-            $emergencyContact = json_decode($data['emergency_contact'], true);
-            $familyBackground = json_decode($data['family_background'], true);
-            $educationBackground = json_decode($data['education_background'], true);
-            $employmentHistory = json_decode($data['employment_history'], true);
-            $additionalInformation = json_decode($data['additional_information'], true);
-            
-            // 1. First, save job information sources and get their IDs
+            // Insert or update applicant record
+            DB::table('applicants')->updateOrInsert(
+                ['user_id' => $userId],
+                [
+                    'full_name'        => $validated['full_name'],
+                    'email'            => $validated['email'],
+                    'phone'            => $validated['phone'],
+                    'profile_picture'  => $profilePicturePath ?? optional($applicant)->profile_picture,
+                    'birth_date'       => $validated['birth_date'],
+                    'place_of_birth'   => $validated['place_of_birth'],
+                    'civil_status'     => $validated['civil_status'],
+                    'position_desired' => $validated['position_desired'],
+                    'present_address'  => $validated['present_address'],
+                    'provincial_address'=> $validated['provincial_address'],
+                    'religion'         => $validated['religion'] ?? null,
+                    'nationality'      => $validated['nationality'],
+                    'job_info_id'      => $jobInfoId,
+                    'signature'        => $signaturePath ?? optional($applicant)->signature,
+                    'updated_at'       => now(),
+                    'created_at'       => optional($applicant)->created_at ?? now(),
+                ]
+            );
 
-            $jobSource = $data['job_sources']; // already a string
+            // Get applicant ID safely
+            $applicantId = DB::table('applicants')
+                ->where('user_id', $userId)
+                ->value('id');
 
-            $existingSource = DB::table('job_information_source')
-                ->where('name', $jobSource)
-                ->where('removed', 0)
-                ->first();
+            // Save base64 files
+            $profilePicturePath = !empty($validated['profile_picture'])
+                ? $this->saveProfilePicture($applicantId, $validated['profile_picture'])
+                : optional($applicant)->profile_picture;
 
-            if ($existingSource) {
-                $jobInfoId = $existingSource->id;
-            } else {
-                $jobInfoId = DB::table('job_information_source')->insertGetId([
-                    'name' => $jobSource,
-                    'created_at' => now(),
-                    'updated_at' => now()
-                ]);
+            $signaturePath = !empty($validated['signature'])
+                ? $this->saveBase64Image($validated['signature'], 'signatures')
+                : null;
+
+
+            // Save resume into applicant_files (upsert)
+            if (!empty($validated['resume'])) {
+                $resumePath = $this->saveResumeFile($applicantId, $validated['resume'], 'resume');
+
+                DB::table('applicant_files')->updateOrInsert(
+                    [
+                        'applicant_id' => $applicantId, // condition → check if this applicant already has a resume
+                        'file_type'    => 'resume',
+                        'removed'      => 0,
+                    ],
+                    [
+                        'file_name'    => 'resume',
+                        'file_path'    => $resumePath,
+                        'status'       => 'approved',
+                        'uploaded_at'  => now(),
+                        'removed'   => 0,
+                    ]
+                );
             }
 
-            // Use the first job info ID for the applicant
-            $jobInfoId = !empty($jobInfoIds) ? $jobInfoIds[0] : null;
-            
-            // Handle profile picture if provided
-            $profilePicturePath = null;
-            if (!empty($data['profile_picture'])) {
-                $profilePicturePath = $this->saveBase64Image($data['profile_picture'], 'profile_pictures');
-            } elseif ($existingApplicant && $existingApplicant->profile_picture) {
-                $profilePicturePath = $existingApplicant->profile_picture;
-            }
-            
-            // Handle signature if provided
-            $signaturePath = null;
-            if (!empty($data['signature'])) {
-                $signaturePath = $this->saveBase64Image($data['signature'], 'signatures');
-            } elseif ($existingApplicant && $existingApplicant->signature) {
-                $signaturePath = $existingApplicant->signature;
-            }
-            
-            // 2. Save or update the main applicant information
-            $applicantData = [
-                'user_id' => $userId,
-                'full_name' => $data['full_name'],
-                'email' => $data['email'],
-                'phone' => $data['phone'],
-                'profile_picture' => $profilePicturePath,
-                'birth_date' => $data['birth_date'],
-                'place_of_birth' => $data['place_of_birth'],
-                'civil_status' => $data['civil_status'],
-                'position_desired' => $data['position_desired'],
-                'present_address' => $data['present_address'],
-                'provincial_address' => $data['provincial_address'],
-                'religion' => $data['religion'] ?? null,
-                'nationality' => $data['nationality'],
-                'job_info_id' => $jobInfoId,
-                'signature' => $signaturePath,
-                'licensure_exam' => $data['licensure_exam'] ?? null,
-                'license_no' => $data['license_no'] ?? null,
-                'extra_curricular' => $data['extra_curricular'] ?? null,
-                'updated_at' => now()
-            ];
-
-            if ($existingApplicant) {
-                // Update existing applicant
-                $applicantId = $existingApplicant->id;
-                DB::table('applicants')
-                    ->where('id', $applicantId)
-                    ->update($applicantData);
-            } else {
-                // Create new applicant
-                $applicantData['created_at'] = now();
-                $applicantId = DB::table('applicants')->insertGetId($applicantData);
-            }
-            
-            // 3. Delete existing related records before inserting new ones
+            // Clear related data
             DB::table('emergency_contact')->where('applicant_id', $applicantId)->delete();
             DB::table('family_background')->where('applicant_id', $applicantId)->delete();
             DB::table('educational_background')->where('applicant_id', $applicantId)->delete();
             DB::table('employment_history')->where('applicant_id', $applicantId)->delete();
             DB::table('additional_information')->where('applicant_id', $applicantId)->delete();
-            
-            // 4. Save emergency contact
-            if (!empty($emergencyContact) && is_array($emergencyContact)) {
-                DB::table('emergency_contact')->insert([
-                    'applicant_id' => $applicantId,
-                    'fname' => $emergencyContact['full_name'] ?? null,
-                    'contact' => $emergencyContact['contact_no'] ?? null,
-                    'address' => $emergencyContact['present_address'] ?? null,
-                    'relationship' => $emergencyContact['relationship'] ?? null,
-                    'created_at' => now(),
-                    'updated_at' => now()
-                ]);
-            }
-            
-            // 5. Save family background
-            if (!empty($familyBackground) && is_array($familyBackground)) {
-                foreach ($familyBackground as $familyMember) {
-                    if (!empty($familyMember['name'])) {
-                        DB::table('family_background')->insert([
-                            'applicant_id' => $applicantId,
-                            'fname' => $familyMember['name'],
-                            'date_birth' => $familyMember['date_of_birth'] ?? null,
-                            'age' => $familyMember['age'] ?? null,
-                            'relationship' => $familyMember['relationship'] ?? null,
-                            'created_at' => now(),
-                            'updated_at' => now()
-                        ]);
-                    }
-                }
-            }
-            
-            // 6. Save educational background
-            if (!empty($educationBackground) && is_array($educationBackground)) {
-                foreach ($educationBackground as $level => $education) {
-                    if (!empty($education['name_of_school'])) {
-                        // Get academic level ID based on the level key
-                        $academicLevelId = $this->getAcademicLevelId($level);
-                        
-                        DB::table('educational_background')->insert([
-                            'applicant_id' => $applicantId,
-                            'academic_level_id' => $academicLevelId,
-                            'name_of_school' => $education['name_of_school'],
-                            'from_date' => $education['from_year'] ? $education['from_year'] . '-01-01 00:00:00' : null,
-                            'to_date' => $education['to_year'] ? $education['to_year'] . '-01-01 00:00:00' : null,
-                            'degree_major' => $education['degree_major'] ?? null,
-                            'award' => $education['award'] ?? null,
-                            'licensure_exam' => $data['licensure_exam'] ?? null,
-                            'license_no' => $data['license_no'] ?? null,
-                            'extra_curricular' => $data['extra_curricular'] ?? null,
-                            'created_at' => now(),
-                            'updated_at' => now()
-                        ]);
-                    }
-                }
-            }
-            
-            // 7. Save employment history
-            if (!empty($employmentHistory) && is_array($employmentHistory)) {
-                foreach ($employmentHistory as $employment) {
-                    if (!empty($employment['employer'])) {
-                        DB::table('employment_history')->insert([
-                            'applicant_id' => $applicantId,
-                            'employer' => $employment['employer'],
-                            'last_position' => $employment['last_position'] ?? null,
-                            'from_date' => $employment['from_date'] ?? null,
-                            'to_date' => $employment['to_date'] ?? null,
-                            'salary' => $employment['salary'] ?? null,
-                            'benefits' => $employment['benefits'] ?? null,
-                            'created_at' => now(),
-                            'updated_at' => now()
-                        ]);
-                    }
-                }
-            }
-            
-            // 8. Save additional information
-            if (!empty($additionalInformation) && is_array($additionalInformation)) {
-                foreach ($additionalInformation as $question => $answer) {
-                    DB::table('additional_information')->insert([
-                        'applicant_id' => $applicantId,
-                        'question' => $question,
-                        'answer' => is_array($answer) ? json_encode($answer) : $answer,
-                        'created_at' => now(),
-                        'updated_at' => now()
-                    ]);
-                }
-            }
+            DB::table('applicant_achievements')->where('applicant_id', $applicantId)->delete();
+
+            // Insert related tables
+            $this->storeEmergencyContact($applicantId, $validated['emergency_contact']);
+            $this->storeFamilyBackground($applicantId, $validated['family_background']);
+            $this->storeEducationBackground($applicantId, $validated['education_background']);
+            $this->storeEmploymentHistory($applicantId, $validated['employment_history']);
+            $this->storeAdditionalInformation($applicantId, $validated['additional_information']);
+
+            $this->storeAchievements($applicantId, [
+                'licensure_exam'   => $validated['licensure_exam'] ?? '',
+                'license_no'       => $validated['license_no'] ?? '',
+                'extra_curricular' => $validated['extra_curricular'] ?? '',
+            ]);
             
             DB::update('UPDATE users SET accept_privacy_policy = 1, updated_at = NOW() WHERE id = ?', [$userId]);
 
             DB::commit();
-            
             return response()->json([
                 'success' => true,
-                'message' => $existingApplicant ? 'Application updated successfully' : 'Application submitted successfully',
-                'applicant_id' => $applicantId
-            ], $existingApplicant ? 200 : 201);
-            
+                'message' => 'Application submitted successfully',
+                'applicant_id' => $applicantId,
+            ], 201);
         } catch (\Exception $e) {
             DB::rollBack();
             Log::error('Job application error: ' . $e->getMessage());
-            
             return response()->json([
                 'success' => false,
                 'message' => 'Failed to submit application',
-                'error' => env('APP_DEBUG') ? $e->getMessage() : 'Internal server error'
+                'error' => env('APP_DEBUG') ? $e->getMessage() : 'Internal server error',
             ], 500);
         }
     }
-    
-    /**
-     * Save base64 encoded image to storage
-     */
-    private function saveBase64Image($base64Image, $folder)
+
+    /* ------------ File Helpers ------------ */
+
+    protected function saveProfilePicture(int $applicantId, string $base64File): ?string
     {
-        if (preg_match('/^data:image\/(\w+);base64,/', $base64Image, $type)) {
-            $image = substr($base64Image, strpos($base64Image, ',') + 1);
-            $type = strtolower($type[1]); // jpg, png, gif
-            
-            if (!in_array($type, ['jpg', 'jpeg', 'png', 'gif'])) {
-                throw new \Exception('Invalid image type');
-            }
-            
-            $image = str_replace(' ', '+', $image);
-            $image = base64_decode($image);
-            
-            if ($image === false) {
-                throw new \Exception('Base64 decode failed');
-            }
-        } else {
-            throw new \Exception('Invalid base64 image format');
+        $applicant = DB::table('applicants')->where('id', $applicantId)->first();
+
+        // delete existing profile picture if it exists
+        if ($applicant && $applicant->profile_picture && Storage::disk('public')->exists($applicant->profile_picture)) {
+            Storage::disk('public')->delete($applicant->profile_picture);
         }
-        
-        $fileName = Str::random(20) . '.' . $type;
-        $filePath = $folder . '/' . $fileName;
-        
-        // Save the file to storage
-        \Storage::disk('public')->put($filePath, $image);
-        
-        return $filePath;
+
+        // save new file
+        return $this->saveBase64File($base64File, 'profile_pictures');
     }
-    
-    /**
-     * Map education level to academic level ID
-     */
+
+    protected function saveResumeFile(int $applicantId, string $base64File): ?string
+    {
+        $existingFile = DB::table('applicant_files')
+            ->where('applicant_id', $applicantId)
+            ->where('file_type', 'resume')
+            ->where('removed', 0)
+            ->first();
+
+        // delete old file if it exists
+        if ($existingFile && $existingFile->file_path && Storage::disk('public')->exists($existingFile->file_path)) {
+            Storage::disk('public')->delete($existingFile->file_path);
+        }
+
+        // save new file into /resumes
+        $newPath = $this->saveBase64File($base64File, 'resumes');
+
+        return $newPath;
+    }
+
+
+    protected function saveBase64File(string $base64File, string $directory, array $allowedExtensions = ['png', 'jpg', 'jpeg', 'pdf', 'doc', 'docx']): ?string
+    {
+        if (preg_match('/^data:(.*?);base64,(.*)$/', $base64File, $matches)) {
+            $mimeType = $matches[1];
+            $data = base64_decode($matches[2]);
+
+            if ($data === false) {
+                throw new \Exception("Invalid base64 data");
+            }
+
+            $extension = $this->mimeToExtension($mimeType);
+            if (!in_array($extension, $allowedExtensions)) {
+                throw new \Exception("File type not allowed: $extension");
+            }
+
+            $filename = uniqid() . '.' . $extension;
+            $path = $directory . '/' . $filename;
+
+            Storage::disk('public')->put($path, $data);
+
+            return $path;
+        }
+        return null;
+    }
+
+    protected function saveBase64Image(string $base64Image, string $directory): ?string
+    {
+        return $this->saveBase64File($base64Image, $directory, ['png', 'jpg', 'jpeg']);
+    }
+
+    private function mimeToExtension(string $mimeType): string
+    {
+        $map = [
+            'image/png' => 'png',
+            'image/jpeg' => 'jpg',
+            'image/jpg' => 'jpg',
+            'application/pdf' => 'pdf',
+            'application/msword' => 'doc',
+            'application/vnd.openxmlformats-officedocument.wordprocessingml.document' => 'docx',
+        ];
+        return $map[$mimeType] ?? 'bin';
+    }
+
+    /* ------------ Related Records ------------ */
+
+    private function storeEmergencyContact(int $applicantId, array $data)
+    {
+        DB::table('emergency_contact')->insert([
+            'applicant_id' => $applicantId,
+            'fname'        => $data['fname'] ?? null,
+            'contact'      => $data['contact'] ?? null,
+            'address'      => $data['address'] ?? null,
+            'relationship' => $data['relationship'] ?? null,
+            'created_at'   => now(),
+            'updated_at'   => now(),
+        ]);
+    }
+
+    private function storeFamilyBackground(int $applicantId, array $data)
+    {
+        foreach ($data as $row) {
+            DB::table('family_background')->insert([
+                'applicant_id' => $applicantId,
+                'fname'        => $row['fname'] ?? null,
+                'date_birth'   => $row['date_birth'] ?? null,
+                'age'          => $row['age'] ?? null,
+                'relationship' => $row['relationship'] ?? null,
+                'created_at'   => now(),
+                'updated_at'   => now(),
+            ]);
+        }
+    }
+
+    private function storeEducationBackground(int $applicantId, array $data)
+    {
+        foreach ($data as $level => $row) {
+            $academicLevelId = $this->getAcademicLevelId($level);
+
+            DB::table('educational_background')->insert([
+                'applicant_id'      => $applicantId,
+                'academic_level_id' => $academicLevelId,
+                'name_of_school'    => $row['name_of_school'] ?? null,
+                'from_date'         => $row['from_date'] ?? null,
+                'to_date'           => $row['to_date'] ?? null,
+                'degree_major'      => $row['degree_major'] ?? null,
+                'award'             => $row['award'] ?? null,
+                'created_at'        => now(),
+                'updated_at'        => now(),
+            ]);
+        }
+    }
+
+    private function storeAchievements(int $applicantId, array $data)
+    {
+        // Split by comma
+        $licensureExams = isset($data['licensure_exam']) ? array_map('trim', explode(',', $data['licensure_exam'])) : [];
+        $licenseNos     = isset($data['license_no']) ? array_map('trim', explode(',', $data['license_no'])) : [];
+        $extraCurr      = isset($data['extra_curricular']) ? array_map('trim', explode(',', $data['extra_curricular'])) : [];
+
+        // Determine max count
+        $count = max(count($licensureExams), count($licenseNos), count($extraCurr));
+
+        for ($i = 0; $i < $count; $i++) {
+            DB::table('applicant_achievements')->insert([
+                'applicant_id'    => $applicantId,
+                'licensure_exam'  => $licensureExams[$i] ?? null,
+                'license_no'      => $licenseNos[$i] ?? null,
+                'extra_curricular'=> $extraCurr[$i] ?? null,
+                'created_at'      => now(),
+                'updated_at'      => now(),
+            ]);
+        }
+    }
+
+    private function storeEmploymentHistory(int $applicantId, array $data)
+    {
+        foreach ($data as $row) {
+            DB::table('employment_history')->insert([
+                'applicant_id' => $applicantId,
+                'employer'     => $row['employer'] ?? null,
+                'last_position'=> $row['last_position'] ?? null,
+                'from_date'    => $row['from_date'] ?? null,
+                'to_date'      => $row['to_date'] ?? null,
+                'salary'       => $row['salary'] ?? null,
+                'benefits'     => $row['benefits'] ?? null,
+                'created_at'   => now(),
+                'updated_at'   => now(),
+            ]);
+        }
+    }
+
+
+    private function storeAdditionalInformation(int $applicantId, array $data)
+    {
+        foreach ($data as $question => $answer) {
+            // detect if this field has a reason counterpart
+            $reasonKey = $question . '_reason';
+            $reason = $data[$reasonKey] ?? null;
+
+            // skip reason-only keys so we don't insert them separately
+            if (str_ends_with($question, '_reason')) {
+                continue;
+            }
+
+            DB::table('additional_information')->insert([
+                'applicant_id' => $applicantId,
+                'question'     => $question,
+                'answer'       => $answer,
+                'reason'       => $reason,
+                'created_at'   => now(),
+                'updated_at'   => now(),
+            ]);
+        }
+    }
+
     private function getAcademicLevelId($level)
     {
         $levelMap = [
@@ -332,20 +392,18 @@ class UserPrivacyController extends Controller
             'college_school' => 'College',
             'graduate_school' => 'Graduate School'
         ];
-        
+
         $levelName = $levelMap[$level] ?? ucfirst(str_replace('_', ' ', $level));
-        
-        // Try to find the academic level in the database
+
         $academicLevel = DB::table('academic_level')
             ->where('name', 'like', '%' . $levelName . '%')
             ->where('removed', 0)
             ->first();
-        
+
         if ($academicLevel) {
             return $academicLevel->id;
         }
-        
-        // If not found, create a new academic level
+
         return DB::table('academic_level')->insertGetId([
             'name' => $levelName,
             'created_at' => now(),
