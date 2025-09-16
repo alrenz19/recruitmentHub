@@ -331,7 +331,7 @@ class RecruitmentBoardController extends Controller
                         'pipeline_id'=> $row->pipeline_id,
                         'name' => $row->full_name ?? '',
                         'position' => $row->position ?? '',
-                        'avatar' => url('storage/' . $row->avatar) ?? '',
+                        'avatar' => (!empty($row->avatar) && $row->avatar !== '/')  ? url('storage/' . $row->avatar) : '',
                         'address' => $row->address ?? '',
                         'salary' => $row->salary ?? '',
                         'notes' => $notesByApplicant[$row->id] ?? [],
@@ -445,9 +445,9 @@ class RecruitmentBoardController extends Controller
 
         // Prepend full storage URL
         $files = array_map(function($f) {
-            if (!empty($f['file_path'])) {
-                $f['file_path'] = url('/storage/' . $f['file_path']);
-            }
+            $f['file_path'] = (!empty($f['file_path']) && $f['file_path'] !== '/')
+                ? url('/storage/' . ltrim($f['file_path'], '/'))
+                : '';
             return $f;
         }, $files);
 

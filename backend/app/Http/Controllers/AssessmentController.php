@@ -92,7 +92,7 @@ class AssessmentController extends Controller
                         'id' => $q->id,
                         'question_text' => $q->question_text,
                         'question_type' => $q->question_type,
-                        'image_path' => url('storage/' . $q->image_path),
+                        'image_path' =>(!empty($q->image_path) && $q->image_path !== '/')  ? url('storage/' . $q->image_path) : '',
                         'options' => $options[$q->id] ?? [],
                     ];
                 });

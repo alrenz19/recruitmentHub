@@ -36,7 +36,7 @@ class CandidateController extends Controller
         $request->validate([
             'per_page' => 'nullable|integer|min:1|max:100',
             'page' => 'nullable|integer|min:1',
-            'refresh' => 'nullable|boolean'
+            'refresh' => 'nullable|string'
         ]);
 
         $perPage = $request->input('per_page', 10);
