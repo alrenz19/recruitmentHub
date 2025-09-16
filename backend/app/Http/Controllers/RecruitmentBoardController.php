@@ -152,7 +152,7 @@ class RecruitmentBoardController extends Controller
                 'id' => $row->applicant_id,
                 'name' => $row->full_name,
                 'position' => $row->position,
-                'avatar' => $row->avatar,
+                'avatar' => url('storage/' . $row->avatar),
                 'notes' => json_decode($row->notes, true),
                 'progress' => json_decode($row->progress, true),
                 'tags' => json_decode($row->tags, true),
@@ -331,7 +331,7 @@ class RecruitmentBoardController extends Controller
                         'pipeline_id'=> $row->pipeline_id,
                         'name' => $row->full_name ?? '',
                         'position' => $row->position ?? '',
-                        'avatar' => $row->avatar ?? '',
+                        'avatar' => url('storage/' . $row->avatar) ?? '',
                         'address' => $row->address ?? '',
                         'salary' => $row->salary ?? '',
                         'notes' => $notesByApplicant[$row->id] ?? [],
@@ -357,7 +357,6 @@ class RecruitmentBoardController extends Controller
     {
         $creatorUserId = auth()->id();
 
-        // Get HR staff record for the current user
         $hrStaff = DB::table('hr_staff')
             ->where('user_id', $creatorUserId)
             ->first();
@@ -366,7 +365,6 @@ class RecruitmentBoardController extends Controller
 
         $row = DB::selectOne("
             SELECT 
-                -- Files
                 IFNULL(
                     CONCAT('[', GROUP_CONCAT(
                         DISTINCT JSON_OBJECT(
@@ -376,8 +374,6 @@ class RecruitmentBoardController extends Controller
                     SEPARATOR ','), ']'),
                     '[]'
                 ) AS files,
-
-                -- Assessments + results
                 IFNULL(
                     CONCAT('[', GROUP_CONCAT(
                         DISTINCT JSON_OBJECT(
@@ -388,8 +384,6 @@ class RecruitmentBoardController extends Controller
                     SEPARATOR ','), ']'),
                     '[]'
                 ) AS assessments,
-
-                -- Schedules + participants + stage
                 IFNULL(
                     CONCAT('[', GROUP_CONCAT(
                         DISTINCT JSON_OBJECT(
@@ -401,8 +395,6 @@ class RecruitmentBoardController extends Controller
                     SEPARATOR ','), ']'),
                     '[]'
                 ) AS schedules,
-
-                -- HR inputted score (returns empty if not scored yet)
                 IFNULL(
                     (SELECT aps.raw_score
                     FROM applicant_pipeline_score aps
@@ -413,8 +405,6 @@ class RecruitmentBoardController extends Controller
                     LIMIT 1),
                     ''
                 ) AS my_input_score,
-
-                -- Job offer checker
                 IFNULL(
                     (SELECT 1 
                     FROM job_offers jo 
@@ -423,7 +413,6 @@ class RecruitmentBoardController extends Controller
                     LIMIT 1),
                     0
                 ) AS has_job_offer
-
             FROM applicants a
             LEFT JOIN applicant_files af
                 ON af.applicant_id = a.id AND af.removed = 0
@@ -448,17 +437,29 @@ class RecruitmentBoardController extends Controller
                 GROUP BY applicant_pipeline_id
             ) pt ON pt.applicant_pipeline_id = ap.id
             WHERE a.id = ?
-            GROUP BY a.id,ap.id, rs.stage_name
+            GROUP BY a.id, ap.id, rs.stage_name
         ", [$hrStaffId, $applicantId]);
 
+        // Decode files JSON
+        $files = json_decode($row->files, true);
+
+        // Prepend full storage URL
+        $files = array_map(function($f) {
+            if (!empty($f['file_path'])) {
+                $f['file_path'] = url('/storage/' . $f['file_path']);
+            }
+            return $f;
+        }, $files);
+
         return response()->json([
-            'files' => json_decode($row->files, true),
+            'files' => $files,
             'assessments' => json_decode($row->assessments, true),
             'schedules' => json_decode($row->schedules, true),
             'input_score' => $row->my_input_score,
             'has_job_offer' => (bool)$row->has_job_offer
         ]);
     }
+
 
 
     public function updateStatus(Request $request, $id)

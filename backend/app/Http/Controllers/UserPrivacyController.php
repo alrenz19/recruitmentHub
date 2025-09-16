@@ -276,9 +276,9 @@ class UserPrivacyController extends Controller
     {
         DB::table('emergency_contact')->insert([
             'applicant_id' => $applicantId,
-            'fname'        => $data['fname'] ?? null,
-            'contact'      => $data['contact'] ?? null,
-            'address'      => $data['address'] ?? null,
+            'fname'        => $data['full_name'] ?? null,
+            'contact'      => $data['contact_no'] ?? null,
+            'address'      => $data['present_address'] ?? null,
             'relationship' => $data['relationship'] ?? null,
             'created_at'   => now(),
             'updated_at'   => now(),
@@ -290,8 +290,8 @@ class UserPrivacyController extends Controller
         foreach ($data as $row) {
             DB::table('family_background')->insert([
                 'applicant_id' => $applicantId,
-                'fname'        => $row['fname'] ?? null,
-                'date_birth'   => $row['date_birth'] ?? null,
+                'fname'        => $row['name'] ?? null,
+                'date_birth'   => $row['date_of_birth'] ?? null,
                 'age'          => $row['age'] ?? null,
                 'relationship' => $row['relationship'] ?? null,
                 'created_at'   => now(),
@@ -309,8 +309,8 @@ class UserPrivacyController extends Controller
                 'applicant_id'      => $applicantId,
                 'academic_level_id' => $academicLevelId,
                 'name_of_school'    => $row['name_of_school'] ?? null,
-                'from_date'         => $row['from_date'] ?? null,
-                'to_date'           => $row['to_date'] ?? null,
+                'from_date'         => $row['from_year'] ?? null,
+                'to_date'           => $row['to_year'] ?? null,
                 'degree_major'      => $row['degree_major'] ?? null,
                 'award'             => $row['award'] ?? null,
                 'created_at'        => now(),
