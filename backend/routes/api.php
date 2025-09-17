@@ -24,6 +24,7 @@ use App\Http\Controllers\ChatController;
 use App\Http\Controllers\UserPrivacyController;
 use App\Http\Controllers\ApplicantDashboardController;
 use App\Http\Controllers\ApplicantNotificationController;
+use App\Http\Controllers\PositionController;
 
 
 
@@ -154,6 +155,13 @@ Route::middleware(['auth:sanctum'])->group(function () {
 
     Route::get('/chat/applicant-history/', [ChatController::class, 'ApplicantChatHistory']);
     Route::post('/chat/applicant-send', [ChatController::class, 'ApplicantChatSend']);
+
+
+    //open positions
+    Route::get('/positions', [PositionController::class, 'index']);
+    Route::post('/positions', [PositionController::class, 'store']);
+    Route::put('/positions/{id}', [PositionController::class, 'update']);
+    Route::delete('/positions/{id}', [PositionController::class, 'destroy']);
 });
 
 

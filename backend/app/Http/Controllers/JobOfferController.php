@@ -32,10 +32,8 @@ class JobOfferController extends Controller
                 a.position_desired AS role,
                 a.created_at AS applicationDate,
                 jo.created_at AS offerDate,
-                ap.salary_offer AS salaryOffer,
                 jo.status
             FROM job_offers jo
-            JOIN applications ap ON ap.job_offer_id = jo.id
             JOIN applicants a ON a.id = jo.applicant_id
             WHERE jo.removed = 0
         ";

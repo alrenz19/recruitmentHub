@@ -17,3 +17,5 @@ DB::listen(function ($query) {
 npm install pusher-js laravel-echo
 npm install lodash.debounce
 npm install react-signature-canvas
+npm install react-select
+npm install react-select react-select-async-paginate
