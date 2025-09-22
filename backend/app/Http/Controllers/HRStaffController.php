@@ -28,7 +28,7 @@ class HRStaffController extends Controller
             FROM hr_staff AS hr
             JOIN users AS u ON hr.user_id = u.id
             JOIN roles AS r ON u.role_id = r.id
-            WHERE hr.removed = 0 AND u.is_removed = 0
+            WHERE hr.removed = 0 AND u.removed = 0
         ";
 
         $bindings = [];
@@ -208,7 +208,7 @@ class HRStaffController extends Controller
             // Soft delete related user
             DB::update("
                 UPDATE users
-                SET is_removed = 1, updated_at = NOW()
+                SET removed = 1, updated_at = NOW()
                 WHERE id = (
                     SELECT user_id FROM hr_staff WHERE id = ?
                 )

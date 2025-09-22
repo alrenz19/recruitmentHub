@@ -15,9 +15,12 @@ class DatabaseSeeder extends Seeder
     {
         // User::factory(10)->create();
 
-        User::factory()->create([
-            'name' => 'Test User',
-            'email' => 'test@example.com',
+        DB::table('roles')->insert([
+            ['id' => 1, 'name' => 'super_admin', 'removed' => 0],
+            ['id' => 2, 'name' => 'management', 'removed' => 0],
+            ['id' => 3, 'name' => 'staff', 'removed' => 0],
+            ['id' => 4, 'name' => 'user', 'removed' => 0],
+            ['id' => 5, 'name' => 'user', 'removed' => 0],
         ]);
 
         $levels = [

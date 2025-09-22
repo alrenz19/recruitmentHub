@@ -8,7 +8,7 @@ class Role extends Model
     use HasFactory;
 
     protected $table = 'roles';
-    protected $fillable = ['name', 'is_removed'];
+    protected $fillable = ['name', 'removed'];
 
     public function users()
     {

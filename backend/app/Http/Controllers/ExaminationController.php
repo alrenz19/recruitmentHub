@@ -91,32 +91,92 @@ class ExaminationController extends Controller
 
     public function retrieveAssignedAssessment(Request $request)
     {
-        $userId = Auth::id(); // logged-in user
+        $userId = Auth::id();
         $applicantId = DB::table('applicants')->where('user_id', $userId)->value('id');
 
         if (!$applicantId) {
             return response()->json(['error' => 'Applicant not found'], 404);
         }
 
-        $assignedExams = ApplicantAssessment::where('applicant_id', $applicantId)
-            ->where('removed', 0)
-            ->with(['assessment' => function ($query) {
-                $query->where('removed', 0)->with('questions.options');
-            }])
-            ->get()
-            ->map(function ($aa) {
-                if ($aa->assessment) {
-                    $assessment = $aa->assessment->toArray();
-                    // merge attempts_used from applicant_assessments
-                    $assessment['attempts_used'] = $aa->attempts_used;
-                    return $assessment;
-                }
-                return null;
-            })
-            ->filter()
-            ->values();
+        $rows = DB::select("
+            SELECT 
+                aa.id AS applicant_assessment_id,
+                aa.applicant_id,
+                aa.status AS applicant_status,
+                aa.attempts_used,
+                a.id AS assessment_id,
+                a.title AS assessment_title,
+                a.description AS assessment_description,
+                a.time_allocated,
+                a.time_unit,
+                q.id AS question_id,
+                q.question_text,
+                q.image_path,
+                q.question_type,
+                o.id AS option_id,
+                o.option_text,
+                o.is_correct
+            FROM applicant_assessments aa
+            JOIN assessments a 
+                ON aa.assessment_id = a.id AND a.removed = 0
+            LEFT JOIN assessment_questions q 
+                ON q.assessment_id = a.id AND q.removed = 0
+            LEFT JOIN assessment_options o 
+                ON o.question_id = q.id AND o.removed = 0
+            WHERE aa.applicant_id = :applicantId
+            AND aa.removed = 0
+            ORDER BY a.id, q.id, o.id
+        ", ['applicantId' => $applicantId]);
 
-        return response()->json($assignedExams);
+        // Rebuild nested JSON
+        $assessments = [];
+        foreach ($rows as $row) {
+            $aId = $row->assessment_id;
+
+            if (!isset($assessments[$aId])) {
+                $assessments[$aId] = [
+                    'id' => $aId,
+                    'title' => $row->assessment_title,
+                    'description' => $row->assessment_description,
+                    'time_allocated' => $row->time_allocated,
+                    'time_unit' => $row->time_unit,
+                    'attempts_used' => $row->attempts_used,
+                    'questions' => []
+                ];
+            }
+
+            if ($row->question_id) {
+                $qId = $row->question_id;
+                if (!isset($assessments[$aId]['questions'][$qId])) {
+                    $assessments[$aId]['questions'][$qId] = [
+                        'id' => $qId,
+                        'question_text' => $row->question_text,
+                        'image_path' => $row->image_path,
+                        'question_type' => $row->question_type,
+                        'options' => [],
+                        'correct_option_ids' => []
+                    ];
+                }
+
+                if ($row->option_id) {
+                    $assessments[$aId]['questions'][$qId]['options'][] = [
+                        'id' => $row->option_id,
+                        'option_text' => $row->option_text,
+                    ];
+
+                    if ($row->is_correct) {
+                        $assessments[$aId]['questions'][$qId]['correct_option_ids'][] = $row->option_id;
+                    }
+                }
+            }
+        }
+
+        // Reset numeric indexes for JSON
+        foreach ($assessments as &$a) {
+            $a['questions'] = array_values($a['questions']);
+        }
+
+        return response()->json(array_values($assessments));
     }
 
 

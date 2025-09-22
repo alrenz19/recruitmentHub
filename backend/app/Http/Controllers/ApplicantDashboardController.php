@@ -9,27 +9,43 @@ use Illuminate\Support\Facades\DB;
 
 class ApplicantDashboardController extends Controller
 {
-    public function index(Request $request)
+    public function index()
     {
         $userId = Auth::id();
+        if (!$userId) {
+            return response()->json(['error' => 'Unauthorized'], 401);
+        }
 
-        $applicant = ApplicantDashboard::with('pipeline')
-            ->where('user_id', $userId)
-            ->first();
+        // Fetch applicant + pipeline + scores in one query
+        $rows = DB::select("
+            SELECT 
+                a.id AS applicant_id,
+                a.position_desired,
+                a.desired_salary,
+                a.created_at AS application_date,
+                p.id AS pipeline_id,
+                p.note AS pipeline_note,
+                p.schedule_date,
+                aps.type AS score_type,
+                aps.overall_score
+            FROM applicants a
+            LEFT JOIN applicant_pipeline p ON p.applicant_id = a.id AND p.removed = 0
+            LEFT JOIN applicant_pipeline_score aps ON aps.applicant_pipeline_id = p.id AND aps.removed = 0
+            WHERE a.user_id = ?
+            ORDER BY aps.type ASC
+        ", [$userId]);
 
-        if (!$applicant) {
+        if (empty($rows)) {
             return response()->json(['error' => 'Applicant not found'], 404);
         }
 
-        $pipeline = $applicant->pipeline;
+        $row = $rows[0];
+        $scores = [];
+        foreach ($rows as $r) {
+            if ($r->score_type) $scores[$r->score_type] = $r->overall_score;
+        }
 
-        // fetch scores for exam/interviews
-        $scores = DB::table('applicant_pipeline_score')
-            ->where('applicant_pipeline_id', $pipeline->id)
-            ->get()
-            ->keyBy('type');
-
-        // ordered stages
+        // Stages
         $stageOrder = [
             1 => 'Assessment',
             2 => 'Initial Interview',
@@ -38,24 +54,15 @@ class ApplicantDashboardController extends Controller
             5 => 'Onboard',
         ];
 
-        // helper: check pass/fail
-        $getResult = function ($type) use ($scores) {
-            if (!isset($scores[$type])) {
-                return null;
-            }
-            $score = $scores[$type];
-            return $score->overall_score >= 5 ? 'passed' : 'failed';
-        };
+        $getResult = fn($type) => isset($scores[$type]) ? ($scores[$type] >= 5 ? 'passed' : 'failed') : null;
 
         $steps = [];
         $markNextAsCurrent = false;
-
         foreach ($stageOrder as $id => $name) {
             $status = 'pending';
             $desc = 'Pending';
             $date = null;
 
-            // If the previous stage was "passed", mark this stage as "current"
             if ($markNextAsCurrent) {
                 $status = 'current';
                 $markNextAsCurrent = false;
@@ -63,87 +70,70 @@ class ApplicantDashboardController extends Controller
 
             switch ($name) {
                 case 'Assessment':
-                    if (strtolower($pipeline->note) === 'passed') {
+                    if (strtolower($row->pipeline_note) === 'passed') {
                         $status = 'completed';
                         $result = $getResult('exam_score');
-                        $desc = $result === 'passed'
-                            ? 'You passed the examination'
-                            : 'You failed the examination';
-                        $markNextAsCurrent = true; // next step should be current
-                        $date = $pipeline->schedule_date
-                            ? date('F j, Y g:i A', strtotime($pipeline->schedule_date))
-                            : null;
-                    } elseif (strtolower($pipeline->note) === 'failed') {
+                        $desc = $result === 'passed' ? 'You passed the examination' : 'You failed the examination';
+                        $markNextAsCurrent = true;
+                        $date = $row->schedule_date ? date('F j, Y g:i A', strtotime($row->schedule_date)) : null;
+                    } elseif (strtolower($row->pipeline_note) === 'failed') {
                         $status = 'completed';
                         $desc = 'You failed the examination';
-                    } elseif (strtolower($pipeline->note) === 'cancelled') {
+                    } elseif (strtolower($row->pipeline_note) === 'cancelled') {
                         $status = 'cancelled';
                         $desc = 'Cancelled';
                     }
                     break;
 
                 case 'Initial Interview':
-                    if (strtolower($pipeline->note) === 'passed' && $status === 'completed') {
+                    if (strtolower($row->pipeline_note) === 'passed' && $status === 'completed') {
                         $result = $getResult('initial_interview');
-                        $desc = $result === 'passed'
-                            ? 'You passed the interview'
-                            : 'You failed the interview';
+                        $desc = $result === 'passed' ? 'You passed the interview' : 'You failed the interview';
                         $markNextAsCurrent = true;
-                        $date = $pipeline->schedule_date
-                            ? date('F j, Y g:i A', strtotime($pipeline->schedule_date))
-                            : null;
-                    } elseif (strtolower($pipeline->note) === 'failed' && $status === 'completed') {
+                        $date = $row->schedule_date ? date('F j, Y g:i A', strtotime($row->schedule_date)) : null;
+                    } elseif (strtolower($row->pipeline_note) === 'failed' && $status === 'completed') {
                         $desc = 'You failed the interview';
-                    } elseif (strtolower($pipeline->note) === 'cancelled') {
+                    } elseif (strtolower($row->pipeline_note) === 'cancelled') {
                         $status = 'cancelled';
                         $desc = 'Cancelled';
                     }
                     break;
 
                 case 'Final Interview':
-                    if (strtolower($pipeline->note) === 'passed' && $status === 'completed') {
+                    if (strtolower($row->pipeline_note) === 'passed' && $status === 'completed') {
                         $result = $getResult('final_interview');
-                        $desc = $result === 'passed'
-                            ? 'You passed the interview'
-                            : 'You failed the interview';
+                        $desc = $result === 'passed' ? 'You passed the interview' : 'You failed the interview';
                         $markNextAsCurrent = true;
-                        $date = $pipeline->schedule_date
-                            ? date('F j, Y g:i A', strtotime($pipeline->schedule_date))
-                            : null;
-                    } elseif (strtolower($pipeline->note) === 'failed' && $status === 'completed') {
+                        $date = $row->schedule_date ? date('F j, Y g:i A', strtotime($row->schedule_date)) : null;
+                    } elseif (strtolower($row->pipeline_note) === 'failed' && $status === 'completed') {
                         $desc = 'You failed the interview';
-                    } elseif (strtolower($pipeline->note) === 'cancelled') {
+                    } elseif (strtolower($row->pipeline_note) === 'cancelled') {
                         $status = 'cancelled';
                         $desc = 'Cancelled';
                     }
                     break;
 
                 case 'Hired':
-                    if (strtolower($pipeline->note) === 'declined') {
+                    if (strtolower($row->pipeline_note) === 'declined') {
                         $status = 'completed';
                         $desc = 'Declined';
-                        $date = $pipeline->schedule_date
-                            ? date('F j, Y g:i A', strtotime($pipeline->schedule_date))
-                            : null;
-                    } elseif (strtolower($pipeline->note) === 'accepted') {
+                        $date = $row->schedule_date ? date('F j, Y g:i A', strtotime($row->schedule_date)) : null;
+                    } elseif (strtolower($row->pipeline_note) === 'accepted') {
                         $status = 'completed';
                         $desc = 'Thank you for accepting the job offer';
                         $markNextAsCurrent = true;
-                        $date = $pipeline->schedule_date
-                            ? date('F j, Y g:i A', strtotime($pipeline->schedule_date))
-                            : null;
-                    } elseif (strtolower($pipeline->note) === 'cancelled') {
+                        $date = $row->schedule_date ? date('F j, Y g:i A', strtotime($row->schedule_date)) : null;
+                    } elseif (strtolower($row->pipeline_note) === 'cancelled') {
                         $status = 'cancelled';
                         $desc = 'Cancelled';
                     }
                     break;
 
                 case 'Onboard':
-                    if (strtolower($pipeline->note) === 'completed') {
+                    if (strtolower($row->pipeline_note) === 'completed') {
                         $status = 'completed';
-                        $desc = 'Onboarding - Start Date: ' .
-                            date('F j, Y', strtotime($pipeline->schedule_date));
-                    } elseif (strtolower($pipeline->note) === 'cancelled') {
+                        $desc = 'Onboarding - Start Date: ' . date('F j, Y', strtotime($row->schedule_date));
+                    } elseif (strtolower($row->pipeline_note) === 'cancelled') {
                         $status = 'cancelled';
                         $desc = 'Cancelled';
                     }
@@ -152,7 +142,7 @@ class ApplicantDashboardController extends Controller
 
             $steps[] = [
                 'id' => $id,
-                'name' => ($name === 'Assessment') ? 'Examination' : $name,
+                'name' => $name === 'Assessment' ? 'Examination' : $name,
                 'status' => $status,
                 'date' => $date,
                 'description' => $desc,
@@ -160,15 +150,13 @@ class ApplicantDashboardController extends Controller
         }
 
         return response()->json([
-            'position' => $applicant->position_desired ?? 'N/A',
-            'status' => $pipeline->note ?? 'N/A',
-            'desired_salary' => $applicant->desired_salary
-                ? 'PHP' . number_format($applicant->desired_salary, 0)
-                : 'N/A',
-            'application_date' => $applicant->created_at
-                ? $applicant->created_at->format('F j, Y')
-                : 'N/A',
+            'position' => $row->position_desired ?? 'N/A',
+            'status' => $row->pipeline_note ?? 'N/A',
+            'desired_salary' => $row->desired_salary ? 'PHP' . number_format($row->desired_salary, 0) : 'N/A',
+            'application_date' => $row->application_date ? date('F j, Y', strtotime($row->application_date)) : 'N/A',
             'steps' => $steps,
         ]);
     }
+
+
 }

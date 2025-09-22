@@ -20,7 +20,7 @@ class AuthController extends Controller
 
         $user = User::with(['hrStaff', 'applicant'])
             ->where('user_email', $request->user_email)
-            ->where('is_removed', 0)
+            ->where('removed', 0)
             ->first();
 
         if (!$user || !Hash::check($request->password, $user->password_hash)) {
@@ -91,7 +91,7 @@ class AuthController extends Controller
             'password_hash' => Hash::make($request->password),
             'role_id' => $request->role_id,
             'name' => $request->name,
-            'is_removed' => 0,
+            'removed' => 0,
             'created_at' => now(),
             'email_verified_at' => now(),
             'remember_token' => null

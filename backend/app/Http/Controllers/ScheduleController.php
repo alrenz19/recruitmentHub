@@ -24,7 +24,7 @@ class ScheduleController extends Controller
         // Get the current stage_order from DB
         $currentStage = DB::table('recruitment_stages')
             ->where('stage_name', $stageParam)
-            ->where('is_removed', 0)
+            ->where('removed', 0)
             ->first();
 
         if (!$currentStage) {
@@ -37,7 +37,7 @@ class ScheduleController extends Controller
         // Get next stage details
         $nextStage = DB::table('recruitment_stages')
             ->where('stage_order', $nextStageOrder)
-            ->where('is_removed', 0)
+            ->where('removed', 0)
             ->first();
 
         if (!$nextStage) {
