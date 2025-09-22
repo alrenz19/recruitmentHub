@@ -47,13 +47,13 @@ class AppServiceProvider extends ServiceProvider
         // });
 
         // 🚀 Debug queries in local only
-        if ($this->app->environment('local')) {
-            DB::listen(function ($query) {
-                Log::info("SQL: {$query->sql}", [
-                    'bindings' => $query->bindings,
-                    'time'     => $query->time
-                ]);
-            });
-        }
+        // if ($this->app->environment('local')) {
+        //     DB::listen(function ($query) {
+        //         Log::info("SQL: {$query->sql}", [
+        //             'bindings' => $query->bindings,
+        //             'time'     => $query->time
+        //         ]);
+        //     });
+        // }
     }
 }

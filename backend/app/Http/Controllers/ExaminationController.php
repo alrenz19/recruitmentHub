@@ -292,16 +292,30 @@ class ExaminationController extends Controller
                 ->value('id');
 
             if ($pipelineId) {
-                DB::table('applicant_pipeline_score')->insert([
-                    'applicant_pipeline_id' => $pipelineId,
-                    'raw_score' => $totalScore,
-                    'overall_score' => $totalQuestions,
-                    'type' => 'exam_score',
-                    'removed' => 0,
-                    'created_at' => now(),
-                    'updated_at' => now(),
-                ]);
+                DB::table('applicant_pipeline_score')->updateOrInsert(
+                    [
+                        'applicant_pipeline_id' => $pipelineId,
+                    ],
+                    [
+                        'raw_score' => $totalScore,
+                        'overall_score' => $totalQuestions,
+                        'type' => 'exam_score',
+                        'created_at' => now(),
+                        'updated_at' => now(),
+                    ]
+                );
             }
+            DB::table('assessment_results')->updateOrInsert(
+                    [
+                        'applicant_id' => $applicantId,
+                        'assessment_id' => $examId,
+                    ],
+                    [
+                        'score' => $score,
+                        'status' => ($score >= ($total * 0.5)) ? 'passed' : 'failed',
+                        'reviewed_at' => now(),
+                    ]
+                );
 
             DB::commit();
 
