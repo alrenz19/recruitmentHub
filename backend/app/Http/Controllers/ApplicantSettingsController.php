@@ -77,7 +77,7 @@ public function getProfile()
         // Profile picture upload
         if ($request->hasFile('profile_picture')) {
             $file = $request->file('profile_picture');
-            $filePath = $file->store("applicants/{$applicant->id}/profile", 'public');
+            $filePath = $file->store("profile_pictures", 'public');
 
             $applicant->update([
                 'profile_picture' => $filePath
@@ -87,12 +87,12 @@ public function getProfile()
         // Resume upload (update existing row if exists, else create new)
         if ($request->hasFile('resume')) {
             $file = $request->file('resume');
-            $filePath = $file->store("applicant_files/{$applicant->id}", 'public');
+            $filePath = $file->store("resumes", 'public');
 
             ApplicantFiles::updateOrCreate(
                 [
                     'applicant_id' => $applicant->id,
-                    'file_name'    => 'Resume',
+                    'file_name'    => 'resume',
                 ],
                 [
                     'file_path'    => $filePath,

@@ -356,6 +356,17 @@ class ExaminationController extends Controller
                     'overall' => $totalQuestions,
                 ]);
             }
+            DB::table('assessment_results')->updateOrInsert(
+                    [
+                        'applicant_id' => $applicantId,
+                        'assessment_id' => $examId,
+                    ],
+                    [
+                        'score' => $score,
+                        'status' => ($score >= ($total * 0.5)) ? 'passed' : 'failed',
+                        'reviewed_at' => now(),
+                    ]
+                );
 
             // 11️⃣ Dispatch pipeline finalization
             $attempts = DB::selectOne("

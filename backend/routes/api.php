@@ -25,6 +25,9 @@ use App\Http\Controllers\UserPrivacyController;
 use App\Http\Controllers\ApplicantDashboardController;
 use App\Http\Controllers\ApplicantNotificationController;
 use App\Http\Controllers\PositionController;
+use App\Http\Controllers\ApproverJobOfferController;
+use App\Http\Controllers\ApproverBoardController;
+use App\Http\Controllers\ApproverSettingsController;
 
 
 
@@ -242,7 +245,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
 Route::middleware(['auth:sanctum'])->group(function () {  
     // Data Privacy update
     Route::patch('/users/privacy/accept', [UserPrivacyController::class, 'acceptPrivacyPolicy']);
-    Route::post('/job-application', [UserPrivacyController::class, 'store'])->middleware('verify.recaptcha');
+    Route::post('/job-application', [UserPrivacyController::class, 'store']);
     
     // Dashboard stats
     Route::get('/applicant-dashboard', [ApplicantDashboardController::class, 'index']);
@@ -270,7 +273,18 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::post('/settings/change-password', [ApplicantSettingsController::class, 'changePassword']);
     Route::get('/settings/profile', [ApplicantSettingsController::class, 'getProfile']);
     
+    // Approver Job Offer routes
+    Route::get('/approver-job-offers', [ApproverJobOfferController::class, 'index']);
+    Route::post('/approver-job-offers/signature', [ApproverJobOfferController::class, 'storeSignature']);
+    Route::get('/approver-job-offers/{id}', [ApproverJobOfferController::class, 'show']);
 
+
+    // Approver Board routes
+    Route::get('/approver-board', [ApproverBoardController::class, 'index']);
+
+    // Approver Settings routes
+    Route::post('/approver-settings/change-email', [ApproverSettingsController::class, 'changeEmail']);
+    Route::post('/approver-settings/change-password', [ApproverSettingsController::class, 'changePassword']);
 });
 
 
