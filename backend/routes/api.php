@@ -37,6 +37,68 @@ use App\Http\Controllers\PositionController;
 Route::post('/login', [AuthController::class, 'login']);
 Route::post('/logout', [AuthController::class, 'logout']);
 
+// Route::get('/debug-boot-time', function () {
+//     $start = microtime(true);
+    
+//     // Measure just the framework boot time
+//     $bootTime = microtime(true) - $start;
+    
+//     return response()->json([
+//         'laravel_boot_time' => round($bootTime * 1000, 2) . 'ms',
+//         'database_ping' => 0.07 . 'ms', // Your actual result
+//         'database_query' => 0.03 . 'ms', // Your actual result
+//         'total_request_time' => round((microtime(true) - $start) * 1000, 2) . 'ms',
+//         'framework_overhead' => 'This shows Laravel boot time without any logic'
+//     ]);
+// });
+
+// Route::get('/mysql-version', function() {
+//     $version = DB::select('SELECT VERSION() as version');
+//     return response()->json(['mysql_version' => $version[0]->version]);
+// });
+
+// Route::get('/candidates-fast', function () {
+//     $start = microtime(true);
+    
+//     $candidates = DB::table('applicants')
+//         ->select('id', 'full_name as name', 'position_desired as role', 'email', 'created_at')
+//         ->orderBy('created_at', 'desc')
+//         ->paginate(10);
+    
+//     $time = round((microtime(true) - $start) * 1000, 2);
+    
+//     return response()->json([
+//         'data' => $candidates->items(),
+//         'meta' => $candidates->toArray(),
+//         'response_time' => $time . 'ms'
+//     ]);
+// });
+
+// Route::get('/debug-real-endpoint', function () {
+//     $start = microtime(true);
+    
+//     // Simulate a real endpoint with multiple queries
+//     $users = DB::table('users')->count();
+//     $jobs = DB::table('applicants')->where('in_active', '1')->count();
+//     $applications = DB::table('job_offers')->count();
+    
+//     // Add some business logic overhead
+//     usleep(100000); // Simulate 100ms of processing
+    
+//     $logicTime = microtime(true) - $start;
+    
+//     return response()->json([
+//         'database_operations' => '3 queries executed',
+//         'business_logic_time' => round($logicTime * 1000, 2) . 'ms',
+//         'total_endpoint_time' => round((microtime(true) - $start) * 1000, 2) . 'ms',
+//         'data' => [
+//             'users' => $users,
+//             'active_jobs' => $jobs,
+//             'applications' => $applications
+//         ]
+//     ]);
+// });
+
 // -------------------------------
 // Protected routes (any authenticated user)
 // -------------------------------
@@ -194,7 +256,6 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::get('/examinations', [ExaminationController::class, 'index']);
     Route::get('/examinations/{id}', [ExaminationController::class, 'show']);
     Route::post('/examinations', [ExaminationController::class, 'store']);
-    Route::post('/examinations/{id}/submit', [ExaminationController::class, 'submit']);
     Route::put('/examinations/{id}', [ExaminationController::class, 'update']);
     Route::delete('/examinations/{id}', [ExaminationController::class, 'destroy']);
 

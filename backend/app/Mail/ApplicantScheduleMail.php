@@ -18,7 +18,7 @@ class ApplicantScheduleMail extends Mailable implements ShouldQueue
     public string|null $mode;
     public string|null $link;
 
-    public function __construct($fullName, $stage, $date, $time, $participants, $mode, $link)
+    public function __construct($fullName, $stage, $date, $time, $participants, $mode = null, $link = null)
     {
         $this->fullName     = $fullName;
         $this->stage        = $stage;

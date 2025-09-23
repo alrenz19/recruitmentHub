@@ -17,5 +17,7 @@ You have been scheduled to conduct an interview as part of our hiring process.
 Please confirm your availability. If you are unable to attend, kindly let us know so we can make alternative arrangements.
 
 Thank you,  
-HR Team / Recruitment Coordinator
+Recruitment Team
+---
+
 @endcomponent

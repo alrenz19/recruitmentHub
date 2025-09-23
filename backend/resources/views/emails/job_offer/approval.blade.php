@@ -19,5 +19,5 @@ Review & Approve
 Your timely response will help us proceed smoothly with the hiring process.
 
 Thank you,  
-**HR / Recruitment Team**
+**HR Management**
 @endcomponent

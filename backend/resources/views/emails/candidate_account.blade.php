@@ -18,6 +18,11 @@ Kindly log in, take the assessment, and make sure to change your password afterw
 
 We look forward to seeing your results!
 
+
+Best regards,  
+Recruitment Team  
+Toyoflex 
+
 ---
 
 This is an automated email from the system. Please do not reply to this message.
