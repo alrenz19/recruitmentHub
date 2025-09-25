@@ -8,6 +8,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Validator;
+use App\Mail\JobOfferApprovalMail;
 
 class JobOfferController extends Controller
 {
@@ -167,6 +168,12 @@ class JobOfferController extends Controller
             'signature' => 'nullable|string',
         ]);
 
+        $host = request()->getHost();      // e.g. 172.16.98.32
+        $scheme = request()->getScheme();  // http
+        $loginUrl = $scheme . '://' . $host . ':5173';
+        
+        
+
         $creator = auth()->id();
         $now = now();
 
@@ -254,7 +261,9 @@ class JobOfferController extends Controller
                 return response()->json(['message' => 'No pipeline found for applicant'], 409);
             }
 
-            DB::afterCommit(function () use ($jobOfferId, $validated, $hrStaffId) {
+            $approvalLink = $loginUrl . "/job-offer-status/{$jobOfferId}";
+
+            DB::afterCommit(function () use ($jobOfferId, $validated, $hrStaffId, $approvalLink) {
                  // Get applicant and HR info
                 $applicant = DB::table('applicants')->where('id', $validated['applicant_id'])->first();
                 $hrStaff = DB::table('hr_staff')->where('id', $hrStaffId)->first();
@@ -266,13 +275,13 @@ class JobOfferController extends Controller
 
                 foreach ($managementEmails as $email) {
                     Mail::to($email)
-                        ->queue(new \App\Mail\JobOfferApprovalMail(
+                        ->queue(new JobOfferApprovalMail(
                             $applicant->full_name,
                             $validated['draft']['position'] ?? '',
                             $validated['draft']['department'] ?? '',
                             $hrStaff->name ?? 'HR Staff',
                             $jobOfferId,
-                            route('recruitment-board', ['id' => $jobOfferId])
+                            $approvalLink
                         ));
                 }
             });
@@ -326,70 +335,4 @@ class JobOfferController extends Controller
             'message' => 'Job offer status updated successfully.'
         ]);
     }
-    //     public function show($applicantId)
-    // {
-    //     try {
-    //         // Validate that applicantId is a valid integer
-    //         $validator = Validator::make(['applicantId' => $applicantId], [
-    //             'applicantId' => 'required|integer|exists:applicants,id'
-    //         ]);
-
-    //         if ($validator->fails()) {
-    //             return response()->json([
-    //                 'success' => false,
-    //                 'message' => 'Invalid applicant ID',
-    //                 'errors' => $validator->errors()
-    //             ], 422);
-    //         }
-
-    //         // Get job offers for the applicant
-    //         $jobOffers = DB::table('job_offers as jo')
-    //             ->leftJoin('hr_staff as hr', 'jo.hr_id', '=', 'hr.id')
-    //             ->leftJoin('users as approved_by', 'jo.approved_by_user_id', '=', 'approved_by.id')
-    //             ->select(
-    //                 'jo.id',
-    //                 'jo.hr_id',
-    //                 'jo.applicant_id',
-    //                 'jo.position',
-    //                 'jo.offer_details',
-    //                 'jo.status',
-    //                 'jo.approved_by_user_id',
-    //                 'jo.approved_at',
-    //                 'jo.declined_reason',
-    //                 'jo.accepted_at',
-    //                 'jo.declined_at',
-    //                 'jo.signature_path',
-    //                 'jo.created_at',
-    //                 'jo.updated_at',
-    //                 DB::raw("CONCAT(hr.first_name, ' ', hr.last_name) as hr_name"),
-    //                 DB::raw("CONCAT(approved_by.first_name, ' ', approved_by.last_name) as approved_by_name")
-    //             )
-    //             ->where('jo.applicant_id', $applicantId)
-    //             ->where('jo.removed', 0)
-    //             ->orderBy('jo.created_at', 'desc')
-    //             ->get();
-
-    //         // Decode JSON offer_details for each job offer
-    //         $jobOffers->transform(function ($offer) {
-    //             if ($offer->offer_details) {
-    //                 $offer->offer_details = json_decode($offer->offer_details, true);
-    //             }
-    //             return $offer;
-    //         });
-
-    //         return response()->json([
-    //             'success' => true,
-    //             'data' => $jobOffers,
-    //             'message' => 'Job offers retrieved successfully'
-    //         ]);
-
-    //     } catch (\Exception $e) {
-    //         return response()->json([
-    //             'success' => false,
-    //             'message' => 'Failed to retrieve job offers',
-    //             'error' => $e->getMessage()
-    //         ], 500);
-    //     }
-    // }
-    
 }

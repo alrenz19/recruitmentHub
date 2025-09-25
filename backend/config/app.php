@@ -28,6 +28,12 @@ return [
 
     'env' => env('APP_ENV', 'production'),
 
+    'frontend_url_patterns' => array_filter(
+        explode(',', env('FRONTEND_URL_PATTERNS', ''))
+    ),
+
+
+
     /*
     |--------------------------------------------------------------------------
     | Application Debug Mode

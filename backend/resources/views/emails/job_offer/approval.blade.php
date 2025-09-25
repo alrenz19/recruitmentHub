@@ -3,7 +3,7 @@
 
 Dear Management,
 
-The HR staff **{{ $hrName }}** has submitted a job offer that requires your review and approval.
+The HR staff **{{ $hrName }}** has submitted a job offer proposal that requires your review and approval.
 
 **Applicant Details:**
 - **Name:** {{ $applicantName }}
@@ -18,6 +18,8 @@ Review & Approve
 
 Your timely response will help us proceed smoothly with the hiring process.
 
-Thank you,  
-**HR / Recruitment Team**
+Best regards,
+Recruitment Team
+
+---
 @endcomponent
