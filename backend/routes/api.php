@@ -218,6 +218,9 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::get('/chat/contacts', [ChatController::class, 'contacts']);
 
 
+    // examination update
+
+
     Route::get('/chat/applicant-history/', [ChatController::class, 'ApplicantChatHistory']);
     Route::post('/chat/applicant-send', [ChatController::class, 'ApplicantChatSend']);
 
@@ -261,6 +264,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::post('/examinations', [ExaminationController::class, 'store']);
     Route::put('/examinations/{id}', [ExaminationController::class, 'update']);
     Route::delete('/examinations/{id}', [ExaminationController::class, 'destroy']);
+    Route::patch('/examinations/attempt', [ExaminationController::class, 'attempt']);   
 
     // Candidates File Submit routes
     Route::get('/file-submission', [FileSubmissionController::class, 'index']);

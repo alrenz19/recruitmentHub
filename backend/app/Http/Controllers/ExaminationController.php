@@ -312,7 +312,7 @@ class ExaminationController extends Controller
                 // 9️⃣ Decrement attempts
                 DB::update("
                     UPDATE applicant_assessments
-                    SET attempts_used = attempts_used - 1
+                    SET attempts_used = 0
                     WHERE applicant_id = :aid AND assessment_id = :assid
                 ", [
                     'aid' => $applicantId,
@@ -393,7 +393,6 @@ class ExaminationController extends Controller
         });
     }
 
-
     // Update assessment
     public function update(Request $request, $id)
     {
@@ -415,4 +414,38 @@ class ExaminationController extends Controller
 
         return response()->json(['message' => 'Assessment removed']);
     }
+
+    public function attempt()
+    {
+        $userId = Auth::id();
+
+        // Get applicant ID
+        $applicant = DB::selectOne("
+            SELECT id
+            FROM applicants
+            WHERE user_id = :uid
+        ", ['uid' => $userId]);
+
+        if (!$applicant) {
+            return response()->json(['error' => 'Applicant not found'], 404);
+        }
+
+        $applicantId = $applicant->id;
+
+        // Decrease attempts_used for all assessments of this applicant
+        DB::update("
+            UPDATE applicant_assessments
+            SET attempts_used = attempts_used - 1
+            WHERE applicant_id = :aid
+            AND removed = 0
+        ", [
+            'aid' => $applicantId,
+        ]);
+
+        // Return a simple success message
+        return response()->json([
+            'message' => 'Attempts updated for all assessments of the applicant.'
+        ]);
+    }
+
 }

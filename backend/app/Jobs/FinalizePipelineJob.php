@@ -60,30 +60,19 @@ class FinalizePipelineJob implements ShouldQueue
             ));
 
         } else {
-            if ($this->attempts && $this->attempts->min_attempts <= 0) {
-                // ❌ Failed & no attempts left
-                DB::update("
-                    UPDATE applicant_pipeline
-                    SET note = 'Failed', updated_at = NOW()
-                    WHERE id = :id
-                ", ['id' => $applicant->pipeline_id]);
+            // ❌ Failed & no attempts left
+            DB::update("
+                UPDATE applicant_pipeline
+                SET note = 'Failed', updated_at = NOW()
+                WHERE id = :id
+            ", ['id' => $applicant->pipeline_id]);
 
-                Mail::to($applicant->contact_email)->queue(new AssessmentResultMail(
-                    $applicant->full_name,
-                    $this->totalScore,
-                    $this->totalQuestions,
-                    'Failed'
-                ));
-
-            } else {
-                // ❌ Failed but still attempts left → retry notice
-                Mail::to($applicant->contact_email)->queue(new AssessmentRetryMail(
-                    $applicant->full_name,
-                    $this->totalScore,
-                    $this->totalQuestions,
-                    $this->attempts->min_attempts
-                ));
-            }
+            Mail::to($applicant->contact_email)->queue(new AssessmentResultMail(
+                $applicant->full_name,
+                $this->totalScore,
+                $this->totalQuestions,
+                'Failed'
+            ));
         }
     }
 }
