@@ -19,7 +19,7 @@ Review & Approve
 Your timely response will help us proceed smoothly with the hiring process.
 
 Best regards,
-Recruitment Team
+**Recruitment Team**
 
 ---
 @endcomponent

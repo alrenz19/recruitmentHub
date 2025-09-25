@@ -4,18 +4,26 @@ namespace App\Http\Controllers;
 
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Auth;
+use Illuminate\Foundation\Auth\Access\AuthorizesRequests;
+use Illuminate\Foundation\Bus\DispatchesJobs;
+use Illuminate\Foundation\Validation\ValidatesRequests;
+use Illuminate\Support\Facades\DB;
+
+
+// Model
 use App\Models\Examination;
 use App\Models\AssessmentQuestion;
 use App\Models\AssessmentOption;
 use App\Models\AssessmentAnswer;
 use App\Models\AssessmentResult;
 use App\Models\ApplicantAssessment;
-use Illuminate\Support\Facades\Auth;
-use Illuminate\Foundation\Auth\Access\AuthorizesRequests;
-use Illuminate\Foundation\Bus\DispatchesJobs;
-use Illuminate\Foundation\Validation\ValidatesRequests;
-use Illuminate\Support\Facades\DB;
-use App\Services\NotificationService;
+
+
+// Jobs
+use App\Jobs\FinalizePipelineJob;
+
+
 
 class ExaminationController extends Controller
 {
@@ -171,6 +179,12 @@ class ExaminationController extends Controller
             }
         }
 
+         DB::update("
+            UPDATE applicant_pipeline
+            SET note = 'Failed', updated_at = NOW()
+            WHERE id = :id
+        ", ['id' => $applicantId]);
+
         // Reset numeric indexes for JSON
         foreach ($assessments as &$a) {
             $a['questions'] = array_values($a['questions']);
@@ -181,129 +195,166 @@ class ExaminationController extends Controller
 
 
 
-
     public function submitAll(Request $request)
     {
         $userId = Auth::id();
-        $applicant = DB::table('applicants')->where('user_id', $userId)->first();
-        $applicantId = $applicant->id ?? null;
 
-        if (!$applicantId) {
-            return response()->json(['error' => 'Applicant not found'], 404);
-        }
+        return DB::transaction(function () use ($request, $userId) {
 
-        $data = $request->validate([
-            'exams' => 'required|array|min:1',
-            'exams.*.assessment_id' => 'required|integer|exists:assessments,id',
-            'exams.*.answers' => 'required|array|min:1',
-            'exams.*.answers.*.question_id' => 'required|integer|exists:assessment_questions,id',
-            'exams.*.answers.*.selected_option_ids' => 'nullable|array',
-            'exams.*.answers.*.selected_option_ids.*' => 'integer|exists:assessment_options,id',
-        ]);
+            // 1️⃣ Get applicant
+            $applicant = DB::selectOne("
+                SELECT id, full_name
+                FROM applicants
+                WHERE user_id = :user_id
+                LIMIT 1
+            ", ['user_id' => $userId]);
 
-        $allResults = [];
-        $totalScore = 0;      // ✅ raw score across all exams
-        $totalQuestions = 0;  // ✅ total questions across all exams
+            if (!$applicant) {
+                return response()->json(['error' => 'Applicant not found'], 404);
+            }
 
-        DB::beginTransaction();
-        try {
+            $applicantId = $applicant->id;
+
+            // 2️⃣ Validate request
+            $data = $request->validate([
+                'exams' => 'required|array|min:1',
+                'exams.*.assessment_id' => 'required|integer|exists:assessments,id',
+                'exams.*.answers' => 'required|array|min:1',
+                'exams.*.answers.*.question_id' => 'required|integer|exists:assessment_questions,id',
+                'exams.*.answers.*.selected_option_ids' => 'nullable|array',
+                'exams.*.answers.*.selected_option_ids.*' => 'integer|exists:assessment_options,id',
+            ]);
+
+            $allResults = [];
+            $totalScore = 0;
+            $totalQuestions = 0;
+
             foreach ($data['exams'] as $examData) {
                 $examId = $examData['assessment_id'];
                 $answers = $examData['answers'];
 
-                $assessment = Examination::with('questions.options')->findOrFail($examId);
+                // 3️⃣ Get all questions + options for this assessment in ONE query
+                $rows = DB::select("
+                    SELECT q.id AS question_id, o.id AS option_id, o.is_correct, o.option_text
+                    FROM assessment_questions q
+                    LEFT JOIN assessment_options o ON o.question_id = q.id
+                    WHERE q.assessment_id = :aid
+                ", ['aid' => $examId]);
+
+                $groupedQuestions = collect($rows)->groupBy('question_id');
+                $optionTextMap = collect($rows)->pluck('option_text', 'option_id')->toArray();
+
+                // 4️⃣ Compute total possible score
+                $total = $groupedQuestions->map(function ($options) {
+                    return collect($options)->where('is_correct', 1)->count();
+                })->sum();
 
                 $score = 0;
-                $total = $assessment->questions->count();
+                $insertValues = [];
+                $bindings = [];
 
+                // 5️⃣ Prepare bulk insert for assessment_answers
                 foreach ($answers as $ans) {
                     $submittedOptions = $ans['selected_option_ids'] ?? [];
 
-                    // Delete existing answers
-                    DB::table('assessment_answers')
-                        ->where('applicant_id', $applicantId)
-                        ->where('question_id', $ans['question_id'])
-                        ->delete();
-
-                    // Insert new answers
                     foreach ($submittedOptions as $optId) {
-                        $optionText = DB::table('assessment_options')
-                            ->where('id', $optId)
-                            ->value('option_text');
-
-                        DB::table('assessment_answers')->insert([
-                            'applicant_id'       => $applicantId,
-                            'question_id'        => $ans['question_id'],
-                            'selected_option_id' => $optId,
-                            'answer_text'        => $optionText,
-                            'submitted_at'       => now(),
-                            'removed'            => 0,
-                        ]);
+                        $insertValues[] = "(?, ?, ?, ?, NOW(), 0)";
+                        $bindings[] = $applicantId;
+                        $bindings[] = $ans['question_id'];
+                        $bindings[] = $optId;
+                        $bindings[] = $optionTextMap[$optId] ?? null;
                     }
 
-                    // correctness check
-                    $question = $assessment->questions->firstWhere('id', $ans['question_id']);
-                    if ($question) {
-                        $correctOptions = $question->options->where('is_correct', 1)->pluck('id')->toArray();
+                    // Partial scoring
+                    $correctIds = collect($groupedQuestions[$ans['question_id']] ?? [])
+                        ->where('is_correct', 1)
+                        ->pluck('option_id')
+                        ->toArray();
 
-                        sort($correctOptions);
-                        $submittedCheck = $submittedOptions;
-                        sort($submittedCheck);
-
-                        if ($submittedCheck === $correctOptions) {
-                            $score++;
-                        }
-                    }
+                    $score += count(array_intersect($submittedOptions, $correctIds));
                 }
 
-                // save/update results for this exam
-                DB::table('assessment_results')->updateOrInsert(
-                    [
-                        'applicant_id' => $applicantId,
-                        'assessment_id' => $examId,
-                    ],
-                    [
-                        'score' => $score,
-                        'status' => ($score >= ($total * 0.5)) ? 'passed' : 'failed',
-                        'reviewed_at' => now(),
-                    ]
-                );
-                
-                // increment attempts_used
-                ApplicantAssessment::where('applicant_id', $applicantId)
-                    ->where('assessment_id', $examId)
-                    ->increment('attempts_used');
+                // 6️⃣ Insert/update answers in bulk
+                if (!empty($insertValues)) {
+                    DB::statement("
+                        INSERT INTO assessment_answers (
+                            applicant_id, question_id, selected_option_id,
+                            answer_text, submitted_at, removed
+                        )
+                        VALUES " . implode(',', $insertValues) . "
+                        ON DUPLICATE KEY UPDATE
+                            selected_option_id = VALUES(selected_option_id),
+                            answer_text        = VALUES(answer_text),
+                            submitted_at       = NOW(),
+                            removed            = 0
+                    ", $bindings);
+                }
+
+                // 7️⃣ Determine pass/fail
+                $passingScore = ceil($total * 0.6);
+                $status = ($score >= $passingScore) ? 'passed' : 'failed';
+
+                // 8️⃣ Insert/update assessment_results
+                DB::statement("
+                    INSERT INTO assessment_results (applicant_id, assessment_id, score, status, reviewed_at)
+                    VALUES (:applicant_id, :assessment_id, :score, :status, NOW())
+                    ON DUPLICATE KEY UPDATE
+                        score       = VALUES(score),
+                        status      = VALUES(status),
+                        reviewed_at = VALUES(reviewed_at)
+                ", [
+                    'applicant_id' => $applicantId,
+                    'assessment_id' => $examId,
+                    'score' => $score,
+                    'status' => $status,
+                ]);
+
+                // 9️⃣ Decrement attempts
+                DB::update("
+                    UPDATE applicant_assessments
+                    SET attempts_used = attempts_used - 1
+                    WHERE applicant_id = :aid AND assessment_id = :assid
+                ", [
+                    'aid' => $applicantId,
+                    'assid' => $examId,
+                ]);
 
                 $allResults[] = [
                     'assessment_id' => $examId,
                     'score' => $score,
                     'total' => $total,
-                    'status' => ($score >= ($total * 0.5)) ? 'passed' : 'failed',
+                    'status' => $status,
                 ];
 
-                // ✅ add to overall score
                 $totalScore += $score;
                 $totalQuestions += $total;
             }
 
-            // ✅ Insert into applicant_pipeline_score
-            $pipelineId = DB::table('applicant_pipeline')
-                ->where('applicant_id', $applicantId)
-                ->value('id');
+            // 10️⃣ Upsert pipeline score
+            $pipeline = DB::selectOne("
+                SELECT id FROM applicant_pipeline
+                WHERE applicant_id = :aid
+                LIMIT 1
+            ", ['aid' => $applicantId]);
 
-            if ($pipelineId) {
-                DB::table('applicant_pipeline_score')->updateOrInsert(
-                    [
-                        'applicant_pipeline_id' => $pipelineId,
-                    ],
-                    [
-                        'raw_score' => $totalScore,
-                        'overall_score' => $totalQuestions,
-                        'type' => 'exam_score',
-                        'created_at' => now(),
-                        'updated_at' => now(),
-                    ]
-                );
+            if ($pipeline) {
+                DB::statement("
+                    INSERT INTO applicant_pipeline_score (
+                        applicant_pipeline_id, raw_score, overall_score,
+                        type, removed, created_at, updated_at
+                    ) VALUES (
+                        :pid, :raw, :overall,
+                        'exam_score', 0, NOW(), NOW()
+                    )
+                    ON DUPLICATE KEY UPDATE
+                        raw_score     = VALUES(raw_score),
+                        overall_score = VALUES(overall_score),
+                        updated_at    = NOW()
+                ", [
+                    'pid' => $pipeline->id,
+                    'raw' => $totalScore,
+                    'overall' => $totalQuestions,
+                ]);
             }
             DB::table('assessment_results')->updateOrInsert(
                     [
@@ -317,26 +368,30 @@ class ExaminationController extends Controller
                     ]
                 );
 
-            DB::commit();
+            // 11️⃣ Dispatch pipeline finalization
+            $attempts = DB::selectOne("
+                SELECT MIN(attempts_used) as min_attempts
+                FROM applicant_assessments
+                WHERE applicant_id = :aid
+            ", ['aid' => $applicantId]);
 
-            NotificationService::send(null, "Assessment Result", "{$applicant->full_name} has completed their assessment.", 'assessment', '/recruitment-board', 'hr');
+            FinalizePipelineJob::dispatch(
+                $applicantId,
+                $totalScore,
+                $totalQuestions,
+                $attempts
+            );
 
             return response()->json([
-                'message' => 'All exams submitted successfully',
+                'message' => 'All exams submitted successfully (partial scoring enabled)',
                 'results' => $allResults,
                 'pipeline_score' => [
                     'raw_score' => $totalScore,
                     'overall_score' => $totalQuestions,
-                ]
+                ],
             ]);
-        } catch (\Exception $e) {
-            DB::rollBack();
-            return response()->json(['error' => $e->getMessage()], 500);
-        }
+        });
     }
-
-
-
 
 
     // Update assessment
