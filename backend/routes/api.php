@@ -261,10 +261,12 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::post('/examinations/submit-all', [ExaminationController::class, 'submitAll']);
     Route::get('/examinations', [ExaminationController::class, 'index']);
     Route::get('/examinations/{id}', [ExaminationController::class, 'show']);
-    Route::post('/examinations', [ExaminationController::class, 'store']);
+    // Route::post('/examinations', [ExaminationController::class, 'store']); check if still needed 
     Route::put('/examinations/{id}', [ExaminationController::class, 'update']);
     Route::delete('/examinations/{id}', [ExaminationController::class, 'destroy']);
-    Route::patch('/examinations/attempt', [ExaminationController::class, 'attempt']);   
+    Route::patch('/examinations/attempt', [ExaminationController::class, 'attempt']);
+    Route::patch('/examinations/update-time', [ExaminationController::class, 'saveUsedTime']);
+  
 
     // Candidates File Submit routes
     Route::get('/file-submission', [FileSubmissionController::class, 'index']);

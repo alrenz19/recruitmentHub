@@ -59,43 +59,43 @@ class ExaminationController extends Controller
 
 
     // Store new assessment
-    public function store(Request $request)
-    {
-        $data = $request->validate([
-            'title' => 'required|string',
-            'description' => 'nullable|string',
-            'time_allocated' => 'required|integer|min:1',
-            'time_unit' => 'required|in:minutes,hours',
-            'questions' => 'required|array|min:1',
-        ]);
+    // public function store(Request $request)
+    // {
+    //     $data = $request->validate([
+    //         'title' => 'required|string',
+    //         'description' => 'nullable|string',
+    //         'time_allocated' => 'required|integer|min:1',
+    //         'time_unit' => 'required|in:minutes,hours',
+    //         'questions' => 'required|array|min:1',
+    //     ]);
 
-        $assessment = Examination::create([
-            'title' => $data['title'],
-            'description' => $data['description'] ?? null,
-            'time_allocated' => $data['time_allocated'],
-            'time_unit' => $data['time_unit'],
-            'created_by_user_id' => Auth::id() ?? 1,
-        ]);
+    //     $assessment = Examination::create([
+    //         'title' => $data['title'],
+    //         'description' => $data['description'] ?? null,
+    //         'time_allocated' => $data['time_allocated'],
+    //         'time_unit' => $data['time_unit'],
+    //         'created_by_user_id' => Auth::id() ?? 1,
+    //     ]);
 
-        foreach ($data['questions'] as $q) {
-            $question = AssessmentQuestion::create([
-                'assessment_id' => $assessment->id,
-                'question_text' => $q['question_text'],
-                'question_type' => $q['question_type'],
-                'image_path' => $q['image'] ?? null,
-            ]);
+    //     foreach ($data['questions'] as $q) {
+    //         $question = AssessmentQuestion::create([
+    //             'assessment_id' => $assessment->id,
+    //             'question_text' => $q['question_text'],
+    //             'question_type' => $q['question_type'],
+    //             'image_path' => $q['image'] ?? null,
+    //         ]);
 
-            foreach ($q['options'] as $opt) {
-                AssessmentOption::create([
-                    'question_id' => $question->id,
-                    'option_text' => $opt['option_text'],
-                    'is_correct' => $opt['is_correct'] ?? 0,
-                ]);
-            }
-        }
+    //         foreach ($q['options'] as $opt) {
+    //             AssessmentOption::create([
+    //                 'question_id' => $question->id,
+    //                 'option_text' => $opt['option_text'],
+    //                 'is_correct' => $opt['is_correct'] ?? 0,
+    //             ]);
+    //         }
+    //     }
 
-        return response()->json($assessment->load('questions.options'), 201);
-    }
+    //     return response()->json($assessment->load('questions.options'), 201);
+    // }
 
     public function retrieveAssignedAssessment(Request $request)
     {
@@ -105,6 +105,19 @@ class ExaminationController extends Controller
         if (!$applicantId) {
             return response()->json(['error' => 'Applicant not found'], 404);
         }
+
+        $usedTimeRow = DB::selectOne("
+            SELECT used_time
+            FROM applicant_assessments
+            WHERE applicant_id = :applicantId
+            AND removed = 0
+            AND used_time IS NOT NULL
+            ORDER BY used_time DESC
+            LIMIT 1
+        ", ['applicantId' => $applicantId]);
+
+        $usedTime = $usedTimeRow->used_time ?? 0;
+
 
         $rows = DB::select("
             SELECT 
@@ -181,8 +194,9 @@ class ExaminationController extends Controller
 
          DB::update("
             UPDATE applicant_pipeline
-            SET note = 'Failed', updated_at = NOW()
-            WHERE id = :id
+            SET note = 'In progress', updated_at = NOW()
+            WHERE applicant_id = :id AND removed = 0
+            LIMIT 1
         ", ['id' => $applicantId]);
 
         // Reset numeric indexes for JSON
@@ -190,7 +204,10 @@ class ExaminationController extends Controller
             $a['questions'] = array_values($a['questions']);
         }
 
-        return response()->json(array_values($assessments));
+        return response()->json([
+            'used_time' => $usedTime,              // 👈 aggregated used_time
+            'assessments' => array_values($assessments)
+        ]);
     }
 
 
@@ -423,7 +440,7 @@ class ExaminationController extends Controller
         $applicant = DB::selectOne("
             SELECT id
             FROM applicants
-            WHERE user_id = :uid
+            WHERE user_id = :uid LIMIT 1
         ", ['uid' => $userId]);
 
         if (!$applicant) {
@@ -447,5 +464,34 @@ class ExaminationController extends Controller
             'message' => 'Attempts updated for all assessments of the applicant.'
         ]);
     }
+
+    public function saveUsedTime(Request $request)
+    {
+        $request->validate([
+            'used_time' => 'required|integer|min:0',
+        ]);
+
+        $userId = Auth::id();
+        $usedTime = (int) $request->used_time;
+
+        $updated = DB::update(
+            "UPDATE applicant_assessments
+            SET used_time = :used_time, updated_at = NOW()
+            WHERE applicant_id = (SELECT id FROM applicants WHERE user_id = :uid)
+            AND removed = 0
+            AND (used_time IS NULL OR used_time != :used_time_check)
+            LIMIT 1",
+            [
+                'used_time'       => $usedTime,
+                'used_time_check' => $usedTime, // second placeholder
+                'uid'             => $userId,
+            ]
+        );
+
+        return response()->json([
+            'message'   => $updated ? 'Used time updated' : 'No change needed',
+        ]);
+    }
+
 
 }
