@@ -58,45 +58,6 @@ class ExaminationController extends Controller
     }
 
 
-    // Store new assessment
-    // public function store(Request $request)
-    // {
-    //     $data = $request->validate([
-    //         'title' => 'required|string',
-    //         'description' => 'nullable|string',
-    //         'time_allocated' => 'required|integer|min:1',
-    //         'time_unit' => 'required|in:minutes,hours',
-    //         'questions' => 'required|array|min:1',
-    //     ]);
-
-    //     $assessment = Examination::create([
-    //         'title' => $data['title'],
-    //         'description' => $data['description'] ?? null,
-    //         'time_allocated' => $data['time_allocated'],
-    //         'time_unit' => $data['time_unit'],
-    //         'created_by_user_id' => Auth::id() ?? 1,
-    //     ]);
-
-    //     foreach ($data['questions'] as $q) {
-    //         $question = AssessmentQuestion::create([
-    //             'assessment_id' => $assessment->id,
-    //             'question_text' => $q['question_text'],
-    //             'question_type' => $q['question_type'],
-    //             'image_path' => $q['image'] ?? null,
-    //         ]);
-
-    //         foreach ($q['options'] as $opt) {
-    //             AssessmentOption::create([
-    //                 'question_id' => $question->id,
-    //                 'option_text' => $opt['option_text'],
-    //                 'is_correct' => $opt['is_correct'] ?? 0,
-    //             ]);
-    //         }
-    //     }
-
-    //     return response()->json($assessment->load('questions.options'), 201);
-    // }
-
     public function retrieveAssignedAssessment(Request $request)
     {
         $userId = Auth::id();
@@ -117,7 +78,6 @@ class ExaminationController extends Controller
         ", ['applicantId' => $applicantId]);
 
         $usedTime = $usedTimeRow->used_time ?? 0;
-
 
         $rows = DB::select("
             SELECT 
@@ -168,31 +128,34 @@ class ExaminationController extends Controller
 
             if ($row->question_id) {
                 $qId = $row->question_id;
+
+                // Hide question_text for enumeration or short_answer
+                $questionText = in_array($row->question_type, ['enumeration', 'short_answer'])
+                    ? ''
+                    : $row->question_text;
+
                 if (!isset($assessments[$aId]['questions'][$qId])) {
                     $assessments[$aId]['questions'][$qId] = [
                         'id' => $qId,
-                        'question_text' => $row->question_text,
+                        'question_text' => $questionText,
                         'image_path' => $row->image_path,
                         'question_type' => $row->question_type,
                         'options' => [],
-                        'correct_option_ids' => []
                     ];
                 }
 
+                // Keep options but remove is_correct
                 if ($row->option_id) {
                     $assessments[$aId]['questions'][$qId]['options'][] = [
                         'id' => $row->option_id,
-                        'option_text' => $row->option_text,
+                        'option_text' => $questionText,
                     ];
-
-                    if ($row->is_correct) {
-                        $assessments[$aId]['questions'][$qId]['correct_option_ids'][] = $row->option_id;
-                    }
                 }
             }
         }
 
-         DB::update("
+        // Update applicant pipeline status
+        DB::update("
             UPDATE applicant_pipeline
             SET note = 'In progress', updated_at = NOW()
             WHERE applicant_id = :id AND removed = 0
@@ -205,10 +168,11 @@ class ExaminationController extends Controller
         }
 
         return response()->json([
-            'used_time' => $usedTime,              // 👈 aggregated used_time
+            'used_time' => $usedTime,              
             'assessments' => array_values($assessments)
         ]);
     }
+
 
 
 
@@ -253,9 +217,14 @@ public function submitAll(Request $request)
             $examId = $examData['assessment_id'];
             $answers = $examData['answers'];
 
-            // 3️⃣ Get all questions + options for this assessment
+            // 3️⃣ Get all questions + options + question type for this assessment
             $rows = DB::select("
-                SELECT q.id AS question_id, o.id AS option_id, o.is_correct, o.option_text
+                SELECT 
+                    q.id AS question_id, 
+                    q.question_type,
+                    o.id AS option_id, 
+                    o.is_correct, 
+                    o.option_text
                 FROM assessment_questions q
                 LEFT JOIN assessment_options o ON o.question_id = q.id
                 WHERE q.assessment_id = :aid
@@ -264,10 +233,18 @@ public function submitAll(Request $request)
             $groupedQuestions = collect($rows)->groupBy('question_id');
             $optionTextMap = collect($rows)->pluck('option_text', 'option_id')->toArray();
 
-            // 4️⃣ Compute total possible score (all correct options + correct enumeration answers)
-            $total = $groupedQuestions->map(function ($options) {
-                return collect($options)->where('is_correct', 1)->count();
-            })->sum();
+            // 4️⃣ Compute total possible score correctly per question type
+            $total = 0;
+            foreach ($groupedQuestions as $questionId => $options) {
+                $questionType = $options[0]->question_type ?? 'single_answer';
+                $correctIds = collect($options)->where('is_correct', 1)->pluck('option_id')->toArray();
+
+                if (in_array($questionType, ['enumeration', 'multiple_answer'])) {
+                    $total += count($correctIds); // one point per correct option
+                } else {
+                    $total += 1; // single-answer or short-answer counts as 1
+                }
+            }
 
             $score = 0;
             $insertValues = [];
@@ -275,12 +252,15 @@ public function submitAll(Request $request)
 
             foreach ($answers as $ans) {
                 $submittedOptions = $ans['selected_option_ids'] ?? [];
-                $submittedText = $ans['answer_text'] ?? null;
+                $submittedText = $ans['short_answer'] ?? null;
                 $submittedEnum = $ans['enumeration_answers'] ?? [];
 
                 $questionOptions = $groupedQuestions[$ans['question_id']] ?? [];
                 $correctIds = collect($questionOptions)->where('is_correct', 1)->pluck('option_id')->toArray();
-                $correctTexts = collect($questionOptions)->where('is_correct', 1)->pluck('option_text')->map(fn($txt) => strtolower(trim($txt)))->toArray();
+                $correctTexts = collect($questionOptions)->where('removed', 0)
+                                    ->pluck('option_text')
+                                    ->map(fn($txt) => strtolower(trim($txt)))
+                                    ->toArray();
 
                 // Score for multiple/single choice
                 $score += count(array_intersect($submittedOptions, $correctIds));
@@ -407,10 +387,6 @@ public function submitAll(Request $request)
         return response()->json([
             'message' => 'All exams submitted successfully (partial scoring enabled)',
             'results' => $allResults,
-            'pipeline_score' => [
-                'raw_score' => $totalScore,
-                'overall_score' => $totalQuestions,
-            ],
         ]);
     });
 }
