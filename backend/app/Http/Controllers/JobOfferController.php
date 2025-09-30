@@ -164,7 +164,7 @@ class JobOfferController extends Controller
         $validated = $request->validate([
             'applicant_id' => 'required|integer',
             'draft' => 'required|array',
-            'status' => 'required|in:pending_ceo,pending,approved,declined,accepted',
+            'status' => 'required|in:pending_ceo,pending_applicant,approved_applicant,declined_applicant,pending_management,pending_fm,reject,approved',
             'signature' => 'nullable|string',
         ]);
 
@@ -178,16 +178,16 @@ class JobOfferController extends Controller
         $now = now();
 
         // Check if applicant already has a job offer using parameter binding
-        $existingOffer = DB::table('job_offers')
-            ->where('applicant_id', $validated['applicant_id'])
-            ->first();
+        // $existingOffer = DB::table('job_offers')
+        //     ->where('applicant_id', $validated['applicant_id'])
+        //     ->first();
 
-        if ($existingOffer) {
-            return response()->json([
-                'message' => 'This applicant already has a job offer.',
-                'offer_id' => $existingOffer->id,
-            ], 409);
-        }
+        // if ($existingOffer) {
+        //     return response()->json([
+        //         'message' => 'This applicant already has a job offer.',
+        //         'offer_id' => $existingOffer->id,
+        //     ], 409);
+        // }
 
         // Get HR staff id with parameter binding
         $hrStaff = DB::table('hr_staff')->where('user_id', $creator)->first();
@@ -219,7 +219,7 @@ class JobOfferController extends Controller
         }
 
         // Wrap in transaction
-        DB::transaction(function () use ($hrStaffId, $validated, $offerDetailsJson, $now, $creator, $startDate, $signaturePath) {
+        DB::transaction(function () use ($hrStaffId, $validated, $offerDetailsJson, $now, $creator, $startDate, $signaturePath, $loginUrl) {
             
             // Insert job offer with parameter binding
             $jobOfferId = DB::table('job_offers')->insertGetId([
@@ -269,9 +269,9 @@ class JobOfferController extends Controller
                 $hrStaff = DB::table('hr_staff')->where('id', $hrStaffId)->first();
 
                 // Top management emails (can be a config or DB query)
-                $managementEmails = DB::table('users')
-                    ->where('role_id', 5) // or 'approver', etc.
-                    ->pluck('email');
+                $managementEmails = DB::table('hr_staff')
+                    ->where('user_id', 59) // or 'tsuchiya', etc.
+                    ->pluck('contact_email');
 
                 foreach ($managementEmails as $email) {
                     Mail::to($email)

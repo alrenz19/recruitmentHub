@@ -13,6 +13,7 @@ class ApproverBoardController extends Controller
     $candidates = DB::table('applicant_pipeline')
         ->join('applicants', 'applicant_pipeline.applicant_id', '=', 'applicants.id')
         ->where('applicant_pipeline.current_stage_id', 3)
+        ->where('applicant_pipeline.note', 'Pending')
         ->select(
             'applicants.id as id',
             'applicants.full_name',

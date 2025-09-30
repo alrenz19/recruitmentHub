@@ -283,8 +283,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::get('/approver-job-offers', [ApproverJobOfferController::class, 'index']);
     Route::get('/approver-job-offers/{id}', [ApproverJobOfferController::class, 'show']);
     Route::post('/approver-job-offers/signature', [ApproverJobOfferController::class, 'storeSignature']);
-    Route::get('/approver-job-offers-signature', [ApproverJobOfferController::class, 'getSignature']);
-    Route::delete('/approver-job-offers/signature', [ApproverJobOfferController::class, 'deleteSignature']);
+    Route::get('/approver-job-offers/{userId}/signature', [ApproverJobOfferController::class, 'getSignature']);
     Route::patch('/approver-job-offers/{id}/status', [ApproverJobOfferController::class, 'updateStatus']);
 
 
