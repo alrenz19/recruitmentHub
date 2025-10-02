@@ -1,9 +1,10 @@
 <?php
 namespace App\Events;
 
+use Illuminate\Broadcasting\Channel;
+use Illuminate\Broadcasting\PrivateChannel;
 use Illuminate\Contracts\Broadcasting\ShouldBroadcast;
 use Illuminate\Queue\SerializesModels;
-use Illuminate\Broadcasting\PrivateChannel;
 
 class TypingStatusUpdated implements ShouldBroadcast
 {
@@ -18,7 +19,21 @@ class TypingStatusUpdated implements ShouldBroadcast
 
     public function broadcastOn()
     {
-        // All HRs and applicant listening on this applicant's typing channel
-        return new PrivateChannel('typing.' . $this->typingStatus['applicant_id']);
+        if ($this->typingStatus['user_type'] === 'applicant') {
+            // Applicant typing → only HR team sees it
+            return [new PrivateChannel("hr.chat.{$this->typingStatus['applicant_id']}")];
+        } else {
+            // HR typing → applicant sees generic "recruitment team typing"
+            // Other HR staff see specific "team member [name] is responding"
+            return [
+                new PrivateChannel("applicant.{$this->typingStatus['applicant_id']}"),
+                new PrivateChannel("hr.chat.{$this->typingStatus['applicant_id']}"),
+            ];
+        }
+    }
+
+    public function broadcastAs()
+    {
+        return 'typing-status-updated';
     }
 }

@@ -2,7 +2,7 @@
 
 
 return [
-    'paths' => ['api/*'],
+    'paths' => ['api/*', 'broadcasting/*'],
     'allowed_methods' => ['*'],
 
     // Use regex pattern here

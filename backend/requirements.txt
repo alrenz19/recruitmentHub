@@ -2,7 +2,15 @@ composer require predis/predis
 php artisan queue:work
 docker run -d --name redis -p 6379:6379 redis
 php artisan storage:link
-composer require pusher/pusher-php-server
+composer require laravel/reverb
+php artisan reverb:install
+php artisan migrate
+php artisan reverb:start --host=127.0.0.1 --port=6001
+
+composer require pusher/pusher-php-server //uninstall
+
+npm install -g @soketi/soketi // uninstall
+
 
 change the .env to redis
 
@@ -19,3 +27,4 @@ npm install lodash.debounce
 npm install react-signature-canvas
 npm install react-select
 npm install react-select react-select-async-paginate
+npm install laravel-echo pusher-js

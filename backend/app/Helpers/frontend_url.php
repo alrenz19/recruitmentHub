@@ -23,18 +23,6 @@ function frontend_url(string $path = '', array $params = []): string
         }
     }
 
-    // if (! $isValid) {
-    //     \Log::warning('Blocked untrusted frontend host attempt', [
-    //         'base'       => $base,
-    //         'path'       => $path,
-    //         'params'     => $params,
-    //         'ip'         => request()->ip() ?? 'N/A',
-    //         'user_agent' => request()->userAgent() ?? 'N/A',
-    //     ]);
-
-    //     throw new \Exception("Untrusted frontend host: {$base}");
-    // }
-
     // Append params like /job-offer-status/4
     if (!empty($params)) {
         $path .= '/' . implode('/', $params);

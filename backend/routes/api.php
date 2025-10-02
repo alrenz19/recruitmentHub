@@ -40,6 +40,34 @@ use App\Http\Controllers\ApproverSettingsController;
 Route::post('/login', [AuthController::class, 'login']);
 Route::post('/logout', [AuthController::class, 'logout']);
 
+Route::middleware('auth:sanctum')->group(function () {
+    // Your existing API routes...
+    
+    // Add broadcasting auth route with api prefix
+    Route::post('/broadcasting/auth', function (Request $request) {
+        // Basic authentication check
+        if (!auth()->check()) {
+            return response()->json(['message' => 'Unauthenticated'], 401);
+        }
+
+        // Let Laravel handle the channel authorization via routes/channels.php
+        return Broadcast::auth($request);
+    });
+});
+
+// routes/api.php
+Route::middleware('auth:sanctum')->group(function () {
+    Route::get('/chat/history/{applicantId}', [ChatController::class, 'history']);
+    Route::post('/chat/send', [ChatController::class, 'send']);
+    Route::post('/chat/typing', [ChatController::class, 'typing']);
+    Route::get('/chat/contacts', [ChatController::class, 'contacts']);
+    Route::get('/chat/typing-status/{applicantId}', [ChatController::class, 'getTypingStatus']); // New route
+
+    Route::get('/chat/applicant-history/', [ChatController::class, 'ApplicantChatHistory']);
+    Route::post('/chat/applicant-send', [ChatController::class, 'ApplicantChatSend']);
+    Route::get('/chat/notification', [ChatController::class, 'getUnreadCount']);
+});
+
 // Route::get('/debug-boot-time', function () {
 //     $start = microtime(true);
     
@@ -210,19 +238,6 @@ Route::middleware(['auth:sanctum'])->group(function () {
 
     // notes
     Route::post('/recruitment-notes', [RecruitmentNoteController::class, 'store']);
-
-    // chat
-    Route::get('/chat/history/{applicantId}', [ChatController::class, 'history']);
-    Route::post('/chat/send', [ChatController::class, 'send']);
-    Route::post('/chat/typing', [ChatController::class, 'typing']);
-    Route::get('/chat/contacts', [ChatController::class, 'contacts']);
-
-
-    // examination update
-
-
-    Route::get('/chat/applicant-history/', [ChatController::class, 'ApplicantChatHistory']);
-    Route::post('/chat/applicant-send', [ChatController::class, 'ApplicantChatSend']);
 
 
     //open positions
