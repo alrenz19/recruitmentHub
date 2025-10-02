@@ -37,7 +37,8 @@ class JobOfferNotificationService
             // 🟢 Notify next approver
             switch ($currentApproverRole) {
                 case 'management':
-                    $nextEmail = DB::table('hr_staff')->where('role_id', 'fm')->value('email');
+                    $id = DB::table('job_offers')->where('id', $jobOfferId)->value('management_id');
+                    $nextEmail = DB::table('hr_staff')->where('id', $id)->value('contact_email');
                     break;
                 case 'fm':
                     $nextEmail = DB::table('hr_staff')->where('role', 'admin')->value('email');
