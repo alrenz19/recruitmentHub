@@ -14,59 +14,113 @@ class JobOfferController extends Controller
 {
     public function index(Request $request)
     {
-        // Frontend payload mapping
-        $status = $request->input('status');          // "all" | "pending_ceo" | etc.
-        $role = $request->input('role', '');         // empty string = no filter
-        $search = $request->input('search', '');
-        $perPage = (int) $request->input('perPage', 10);
-        $page = (int) $request->input('page', 1);
+        // Validate and sanitize inputs
+        $validated = $request->validate([
+            'status' => 'nullable|string|in:all,pending_ceo,pending_applicant,approved_applicant,declined_applicant,pending_management,pending_fm,reject,approved',
+            'role' => 'nullable|string|max:255',
+            'search' => 'nullable|string|max:255',
+            'perPage' => 'nullable|integer|min:1|max:100',
+            'page' => 'nullable|integer|min:1',
+            'sort' => 'nullable|string'
+        ]);
+
+        // Extract validated inputs with defaults
+        $status = $validated['status'] ?? 'all';
+        $role = $validated['role'] ?? '';
+        $search = $validated['search'] ?? '';
+        $perPage = (int) ($validated['perPage'] ?? 10);
+        $page = (int) ($validated['page'] ?? 1);
+        
+        // Handle case-insensitive sort parameter
+        $sortInput = strtolower($validated['sort'] ?? 'descending');
+        $sortOrder = in_array($sortInput, ['ascending', 'asc']) ? 'ASC' : 'DESC';
+        
         $offset = ($page - 1) * $perPage;
 
-        // Sort
-        $sortOrder = strtolower($request->input('sort', 'Descending')) === 'ascending' ? 'ASC' : 'DESC';
-
-        // Base SQL
+        // Base SQL with parameterized queries - updated to match your actual table structure
         $sql = "
             SELECT 
                 jo.id,
+                jo.hr_id,
+                jo.applicant_id,
                 a.full_name AS name,
                 a.position_desired AS role,
+                jo.position AS offered_position,
+                jo.offer_details,
+                jo.status,
+                jo.approved_by_user_id,
+                jo.management_id,
+                jo.fm_id,
+                jo.mngt_approved_at,
+                jo.fm_approved_at,
+                jo.approved_at,
+                jo.declined_reason,
+                jo.accepted_at,
+                jo.declined_at,
+                jo.signature_path,
                 a.created_at AS applicationDate,
                 jo.created_at AS offerDate,
-                jo.status
+                jo.updated_at AS updatedDate
             FROM job_offers jo
-            JOIN applicants a ON a.id = jo.applicant_id
+            INNER JOIN applicants a ON a.id = jo.applicant_id
+            WHERE jo.removed = 0
+        ";
+
+        $countSql = "
+            SELECT COUNT(*) as total
+            FROM job_offers jo
+            INNER JOIN applicants a ON a.id = jo.applicant_id
             WHERE jo.removed = 0
         ";
 
         $params = [];
+        $countParams = [];
 
-        // Apply filters
+        // Apply filters with parameter binding
+        $conditions = [];
+        $countConditions = [];
+
         if ($status && $status !== 'all') {
-            $sql .= " AND jo.status = ? ";
+            $conditions[] = "jo.status = ?";
+            $countConditions[] = "jo.status = ?";
             $params[] = $status;
+            $countParams[] = $status;
         }
 
         if ($role !== '') {
-            $sql .= " AND a.position_desired = ? ";
+            $conditions[] = "a.position_desired = ?";
+            $countConditions[] = "a.position_desired = ?";
             $params[] = $role;
+            $countParams[] = $role;
         }
 
         if ($search) {
-            $sql .= " AND (a.full_name LIKE ? OR jo.position LIKE ?) ";
-            $params[] = "%$search%";
-            $params[] = "%$search%";
+            $conditions[] = "(a.full_name LIKE ? OR jo.position LIKE ? OR a.position_desired LIKE ?)";
+            $countConditions[] = "(a.full_name LIKE ? OR jo.position LIKE ? OR a.position_desired LIKE ?)";
+            $params[] = "%{$search}%";
+            $params[] = "%{$search}%";
+            $params[] = "%{$search}%";
+            $countParams[] = "%{$search}%";
+            $countParams[] = "%{$search}%";
+            $countParams[] = "%{$search}%";
         }
 
-        // Count total rows
-        $countSql = "SELECT COUNT(*) as total FROM ($sql) AS sub";
-        $total = DB::selectOne($countSql, $params)->total;
+        // Add conditions to both queries
+        if (!empty($conditions)) {
+            $sql .= " AND " . implode(" AND ", $conditions);
+            $countSql .= " AND " . implode(" AND ", $countConditions);
+        }
 
-        // Pagination and sorting
-        $sql .= " ORDER BY jo.created_at $sortOrder LIMIT ? OFFSET ? ";
+        // Get total count
+        $totalResult = DB::selectOne($countSql, $countParams);
+        $total = $totalResult->total;
+
+        // Add sorting and pagination to main query
+        $sql .= " ORDER BY jo.created_at {$sortOrder} LIMIT ? OFFSET ?";
         $params[] = $perPage;
         $params[] = $offset;
 
+        // Execute main query
         $data = DB::select($sql, $params);
 
         return response()->json([

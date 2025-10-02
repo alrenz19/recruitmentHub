@@ -24,7 +24,7 @@ class HRStaffController extends Controller
         $offset = ($page - 1) * $perPage;
 
         $query = "
-            SELECT hr.id, hr.full_name, hr.contact_email, r.name AS role_name, u.role_id
+            SELECT hr.id, hr.full_name, hr.contact_email, hr.position, hr.department, r.name AS role_name, u.role_id
             FROM hr_staff AS hr
             JOIN users AS u ON hr.user_id = u.id
             JOIN roles AS r ON u.role_id = r.id
@@ -76,6 +76,8 @@ class HRStaffController extends Controller
             'user_email'    => 'required|email|unique:users,user_email',
             'password_hash' => 'required|string',
             'full_name'     => 'required|string|max:150|unique:hr_staff,full_name',
+            'position'      => 'required|string|max:150',
+            'department'    => 'required|string|max:150',
             'contact_email' => 'required|email|unique:hr_staff,contact_email',
         ]);
         $hashed = bcrypt($validated['password_hash'], ['rounds' => 10]);
@@ -96,11 +98,13 @@ class HRStaffController extends Controller
 
             // Insert into hr_staff
             DB::insert("
-                INSERT INTO hr_staff (user_id, full_name, contact_email, created_at, updated_at)
-                VALUES (?, ?, ?, NOW(), NOW())
+                INSERT INTO hr_staff (user_id, full_name, position, department, contact_email, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, NOW(), NOW())
             ", [
                 $userId,
                 $validated['full_name'],
+                $validated['position'],
+                $validated['department'],
                 $validated['contact_email'],
             ]);
 
@@ -130,6 +134,8 @@ class HRStaffController extends Controller
             'user_email'    => "required|email",
             'password_hash' => 'nullable|string',
             'full_name'     => "required|string|max:150|unique:hr_staff,full_name,{$id},id",
+            'position'      => "required|string|max:150",
+            'department'    => "required|string|max:150",
             'contact_email' => "required|email",
         ]);
 
@@ -171,10 +177,12 @@ class HRStaffController extends Controller
             // ✅ Update hr_staff table
             DB::update("
                 UPDATE hr_staff
-                SET full_name = ?, contact_email = ?, updated_at = NOW()
+                SET full_name = ?, position = ?, department = ?, contact_email = ?, updated_at = NOW()
                 WHERE id = ?
             ", [
                 $validated['full_name'],
+                $validated['position'],
+                $validated['department'],
                 $validated['contact_email'],
                 $id
             ]);
