@@ -412,7 +412,33 @@ class RecruitmentBoardController extends Controller
                     AND jo.removed = 0 
                     LIMIT 1),
                     0
-                ) AS has_job_offer
+                ) AS has_job_offer,
+                IFNULL(
+                    (
+                        SELECT JSON_OBJECT(
+                            'status', jo.status,
+                            'accepted_at', jo.accepted_at,
+                            'declined_at', jo.declined_at,
+                            'declined_reason', jo.declined_reason
+                        )
+                        FROM job_offers jo
+                        WHERE jo.applicant_id = a.id
+                        AND jo.removed = 0
+                        AND (
+                            jo.status = 'approved_applicant'
+                            OR jo.status = 'declined_applicant'
+                        )
+                        ORDER BY jo.id DESC
+                        LIMIT 1
+                    ),
+                    JSON_OBJECT(
+                        'status', '',
+                        'accepted_at', NULL,
+                        'declined_at', NULL,
+                        'declined_reason', NULL
+                    )
+                ) AS job_offer_status
+
             FROM applicants a
             LEFT JOIN applicant_files af
                 ON af.applicant_id = a.id AND af.removed = 0
@@ -456,7 +482,8 @@ class RecruitmentBoardController extends Controller
             'assessments' => json_decode($row->assessments, true),
             'schedules' => json_decode($row->schedules, true),
             'input_score' => $row->my_input_score,
-            'has_job_offer' => (bool)$row->has_job_offer
+            'has_job_offer' => (bool)$row->has_job_offer,
+            'job_offer_status' => $row->job_offer_status,
         ]);
     }
 
@@ -490,4 +517,42 @@ class RecruitmentBoardController extends Controller
             'message' => 'Pipeline updated successfully',
         ]);
     }
+
+    public function getSignatures($id)
+    {
+        // Try to find job offer by id
+        $offer = DB::table('job_offers')
+            ->join('applicants', 'job_offers.applicant_id', '=', 'applicants.id')
+            ->where('job_offers.id', $id)
+            ->select('applicants.user_id as applicant_user_id')
+            ->first();
+
+        // If not found, assume the given ID is actually applicant_id
+        if (!$offer) {
+            $offer = DB::table('applicants')
+                ->where('id', $id)
+                ->select('user_id as applicant_user_id')
+                ->first();
+        }
+
+        if (!$offer) {
+            return response()->json(['error' => 'Applicant or job offer not found'], 404);
+        }
+
+        // Get applicant signature
+        $applicantSig = DB::table('applicants')
+            ->where('user_id', $offer->applicant_user_id)
+            ->value('signature');
+
+        // Get admin (CEO) signature
+        $adminSig = DB::table('hr_staff')
+            ->where('user_id', 58) // CEO user
+            ->value('signature');
+
+        return response()->json([
+            'applicant_signature' => $applicantSig ? asset('storage/' . $applicantSig) : null,
+            'admin_signature'     => $adminSig ? asset('storage/' . $adminSig) : null,
+        ]);
+    }
+
 }

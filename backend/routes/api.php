@@ -229,6 +229,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::get('/job-offers/{id}', [JobOfferController::class, 'show']);
     Route::post('/job-offers', [JobOfferController::class, 'store']);
     Route::patch('/job-offers/{id}/status', [JobOfferController::class, 'updateStatus']);
+    Route::get('/job-offers/{id}/signatures', [RecruitmentBoardController::class, 'getSignatures']);
 
 
     // notification routes
@@ -267,6 +268,11 @@ Route::middleware(['auth:sanctum'])->group(function () {
     
     // Dashboard stats
     Route::get('/applicant-dashboard', [ApplicantDashboardController::class, 'index']);
+    Route::get('/applicant-job-offers/{id}', [ApplicantDashboardController::class, 'showOffer']);
+    Route::post('/applicant-job-offers/signature', [ApplicantDashboardController::class, 'storeSignature']);
+    Route::patch('/applicant-job-offers/{id}/status', [ApplicantDashboardController::class, 'updateOfferStatus']);
+    Route::get('/applicant-job-offers/{id}/signatures', [ApplicantDashboardController::class, 'getSignatures']);
+
 
     // Candidates Notification
     Route::get('/applicant-notifications', [ApplicantNotificationController::class, 'index']);
