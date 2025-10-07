@@ -57,6 +57,14 @@ return [
             'channels' => explode(',', (string) env('LOG_STACK', 'single')),
             'ignore_exceptions' => false,
         ],
+        
+        'security' => [
+            'driver' => 'daily',
+            'path' => storage_path('logs/security.log'),
+            'level' => 'notice',
+            'days' => 90,
+            'replace_placeholders' => true,
+        ],
 
         'single' => [
             'driver' => 'single',

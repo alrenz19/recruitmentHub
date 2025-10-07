@@ -4,6 +4,8 @@ namespace App\Http\Controllers;
 
 use App\Models\User;
 use App\Models\PersonalAccessToken;
+use App\Rules\StrongPassword;
+use App\Services\SecurityLoggerService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
@@ -24,29 +26,42 @@ class AuthController extends Controller
             ->first();
 
         if (!$user || !Hash::check($request->password, $user->password_hash)) {
+            // Log failed login attempt
+            SecurityLoggerService::authAttempt('failure', $request->user_email, [
+                'reason' => 'Invalid credentials',
+                'ip' => $request->ip()
+            ]);
+            
             return response()->json([
                 'message' => 'Invalid email or password'
             ], 401);
         }
 
-        // 🔹 Invalidate all previous tokens (DB + cache)
-        // $oldTokens = $user->tokens()->where('name', 'auth_token')->get();
-        // foreach ($oldTokens as $oldToken) {
-        //     Cache::forget("sanctum_token:{$oldToken->token}");
-        //     Cache::forget("sanctum_user:{$oldToken->tokenable_id}");
-        //     Cache::forget("sanctum_latest_token_user:{$oldToken->tokenable_id}");
-        // }
-        // $user->tokens()->where('name', 'auth_token')->delete();
+        //Invalidate all previous tokens (DB + cache)
+        $oldTokens = $user->tokens()->where('name', 'auth_token')->get();
+        foreach ($oldTokens as $oldToken) {
+            Cache::forget("sanctum_token:{$oldToken->token}");
+            Cache::forget("sanctum_user:{$oldToken->tokenable_id}");
+            Cache::forget("sanctum_latest_token_user:{$oldToken->tokenable_id}");
+        }
+        $user->tokens()->where('name', 'auth_token')->delete();
 
-        // 🔹 Create new personal access token
+        // Create new personal access token
         $tokenResult = $user->createToken('auth_token');
         $token = $tokenResult->plainTextToken;
-        $tokenDb = $tokenResult->accessToken;       // DB object
+        $tokenDb = $tokenResult->accessToken;
 
         // Cache DB token object keyed by plain token
         Cache::put("sanctum_token:{$token}", $tokenDb, now()->addMinutes(10));
         Cache::put("sanctum_user:{$user->id}", $user, now()->addMinutes(10));
         Cache::put("sanctum_latest_token_user:{$user->id}", $tokenDb->token, now()->addMinutes(10)); 
+        
+        // Log successful login
+        SecurityLoggerService::authAttempt('success', $user->user_email, [
+            'user_id' => $user->id,
+            'role_id' => $user->role_id,
+            'ip' => $request->ip()
+        ]);
 
         return response()->json([
             'message' => 'Login successful',
@@ -55,6 +70,7 @@ class AuthController extends Controller
                 'role_id'   => $user->role_id,
                 'full_name' => $user->full_name,
                 'user_email'     => $user->user_email,
+                'position'  => $user->position,
                 'accept_privacy_policy' => $user->accept_privacy_policy == 0 ? false : true
             ],
             'token' => $token
@@ -65,11 +81,21 @@ class AuthController extends Controller
     public function logout(Request $request)
     {
         $token = $request->user()?->currentAccessToken();
+        $user = $request->user();
 
         if ($token) {
             Cache::forget("sanctum_token:{$token->token}");
             Cache::forget("sanctum_user:{$token->tokenable_id}");
             $token->delete();
+            
+            // Log successful logout
+            // if ($user) {
+            //     SecurityLoggerService::log('logout', "User logged out successfully", [
+            //         'user_id' => $user->id,
+            //         'user_email' => $user->user_email,
+            //         'ip' => $request->ip()
+            //     ]);
+            // }
         }
 
         return response()->json([

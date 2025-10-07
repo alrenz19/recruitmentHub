@@ -244,6 +244,7 @@ class CandidateController extends Controller
     public function updateCandidate(Request $request, $id)
     {
         $creator = auth()->id();
+        $updaterName = auth()->user()->name ?? 'System Administrator';
 
         // Validate input
         $request->validate([
@@ -251,8 +252,26 @@ class CandidateController extends Controller
             'role'           => 'sometimes|required|string|max:255',
             'assessmentDate' => 'sometimes|required|date',
             'assessments'    => 'sometimes|array',
-            'email'          => 'sometimes|required|email|max:255'
+            'email'          => 'sometimes|required|email|max:255',
+            'password_hash'  => 'nullable|string',
         ]);
+
+        // Track changes for email notification
+        $changes = [];
+        $originalData = [];
+
+        // Get original candidate data before update
+        $originalCandidate = DB::table('applicants')
+            ->where('id', $id)
+            ->first();
+
+        if ($originalCandidate) {
+            $originalData = [
+                'full_name' => $originalCandidate->full_name,
+                'position_desired' => $originalCandidate->position_desired,
+                'email' => $originalCandidate->email,
+            ];
+        }
 
         // Check if updating email to an existing one
         if ($request->email) {
@@ -269,69 +288,146 @@ class CandidateController extends Controller
             }
         }
 
-        DB::transaction(function () use ($request, $id, $creator) {
-            // 1️⃣ Update user email if provided
-            if ($request->email) {
-                DB::table('users')
-                    ->where('id', DB::table('applicants')->where('id', $id)->value('user_id'))
-                    ->update([
-                        'user_email' => $request->email,
-                        'updated_at' => now()
-                    ]);
+        DB::transaction(function () use ($request, $id, $creator, &$changes, $originalData) {
+            $userId = DB::table('applicants')->where('id', $id)->value('user_id');
+            
+            // Track password change
+            $passwordChanged = false;
+
+            // 1️⃣ Update users table
+            if (!empty($request->password_hash)) {
+                $hashed = bcrypt($request->password_hash, ['rounds' => 10]);
+                DB::update("
+                    UPDATE users
+                    SET user_email = ?, password_hash = ?, updated_at = NOW()
+                    WHERE id = ?
+                ", [
+                    $request->email,
+                    $hashed,
+                    $userId
+                ]);
+                $passwordChanged = true;
+                $changes['password'] = 'Updated';
+            } else {
+                if ($request->email) { 
+                    // Check if email actually changed
+                    $currentEmail = DB::table('users')->where('id', $userId)->value('user_email');
+                    if ($currentEmail !== $request->email) {
+                        DB::update("
+                            UPDATE users
+                            SET user_email = ?, updated_at = NOW()
+                            WHERE id = ?
+                        ", [
+                            $request->email,
+                            $userId
+                        ]);
+                        $changes['email'] = $request->email;
+                    }
+                }
             }
 
             // 2️⃣ Update applicant
             $applicantData = [];
-            if ($request->fullName) $applicantData['full_name'] = $request->fullName;
-            if ($request->role) $applicantData['position_desired'] = $request->role;
-            if ($request->email) $applicantData['email'] = $request->email;
-            if (!empty($applicantData)) $applicantData['updated_at'] = now();
-
-            if ($applicantData) {
+            
+            if ($request->fullName && $originalData['full_name'] !== $request->fullName) {
+                $applicantData['full_name'] = $request->fullName;
+                $changes['name'] = $request->fullName;
+            }
+            
+            if ($request->role && $originalData['position_desired'] !== $request->role) {
+                $applicantData['position_desired'] = $request->role;
+                $changes['position'] = $request->role;
+            }
+            
+            if ($request->email && $originalData['email'] !== $request->email) {
+                $applicantData['email'] = $request->email;
+                // Email change already tracked above
+            }
+            
+            if (!empty($applicantData)) {
+                $applicantData['updated_at'] = now();
                 DB::table('applicants')->where('id', $id)->update($applicantData);
             }
 
             // 3️⃣ Update pipeline
             if ($request->assessmentDate) {
-                DB::table('applicant_pipeline')
+                $currentSchedule = DB::table('applicant_pipeline')
                     ->where('applicant_id', $id)
-                    ->update([
-                        'schedule_date' => $request->assessmentDate,
-                        'updated_at' => now(),
-                        'updated_by_user_id' => $creator
-                    ]);
+                    ->value('schedule_date');
+                    
+                if ($currentSchedule != $request->assessmentDate) {
+                    DB::table('applicant_pipeline')
+                        ->where('applicant_id', $id)
+                        ->update([
+                            'schedule_date' => $request->assessmentDate,
+                            'updated_at' => now(),
+                            'updated_by_user_id' => $creator
+                        ]);
+                    $changes['assessment_date'] = $request->assessmentDate;
+                }
             }
 
             // 4️⃣ Update assessments
             if (!empty($request->assessments)) {
-                // Delete old assessments
-                DB::table('applicant_assessments')->where('applicant_id', $id)->delete();
+                // Get current assessments for comparison
+                $currentAssessments = DB::table('applicant_assessments')
+                    ->where('applicant_id', $id)
+                    ->pluck('assessment_id')
+                    ->toArray();
 
-                // Insert new ones
-                $insertData = [];
-                foreach ($request->assessments as $assessmentId) {
-                    $insertData[] = [
-                        'applicant_id' => $id,
-                        'assessment_id' => $assessmentId,
-                        'assigned_by' => $creator,
-                        'created_at' => now(),
-                        'updated_at' => now(),
-                    ];
+                $newAssessments = $request->assessments;
+                
+                // Check if assessments actually changed
+                if (count(array_diff($currentAssessments, $newAssessments)) > 0 || 
+                    count(array_diff($newAssessments, $currentAssessments)) > 0) {
+                    
+                    // Delete old assessments
+                    DB::table('applicant_assessments')->where('applicant_id', $id)->delete();
+
+                    // Insert new ones
+                    $insertData = [];
+                    foreach ($request->assessments as $assessmentId) {
+                        $insertData[] = [
+                            'applicant_id' => $id,
+                            'assessment_id' => $assessmentId,
+                            'assigned_by' => $creator,
+                            'created_at' => now(),
+                            'updated_at' => now(),
+                        ];
+                    }
+                    if ($insertData) {
+                        DB::table('applicant_assessments')->insert($insertData);
+                    }
+                    
+                    $changes['assessments'] = $newAssessments;
                 }
-                if ($insertData) DB::table('applicant_assessments')->insert($insertData);
             }
 
             // 5️⃣ Increment cache version
             Cache::increment('candidates_cache_version');
             $cacheVersion = Cache::get('candidates_cache_version', 2);
-            // Build cache key based on version and request parameters
             $cacheKey = 'candidates_list_v' . $cacheVersion;
             Cache::forget($cacheKey);
         });
 
+        // 6️⃣ Send email notification if there were changes
+        if (!empty($changes)) {
+            $candidateName = $request->fullName ?? $originalData['full_name'] ?? 'Unknown Candidate';
+            
+            Mail::to('hr@yourcompany.com') // Change to appropriate email
+                ->cc(['recruitment@yourcompany.com']) // Add CC recipients as needed
+                ->queue(new CandidateUpdateMail(
+                    $candidateName,
+                    $updaterName,
+                    $changes,
+                    now()->format('Y-m-d H:i:s')
+                ));
+        }
+
         return response()->json([
             'success' => true,
-            'message' => 'Candidate updated successfully'
+            'message' => 'Candidate updated successfully',
+            'changes' => $changes // Optional: return changes for frontend confirmation
         ]);
     }
 

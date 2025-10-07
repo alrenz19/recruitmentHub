@@ -28,3 +28,6 @@ npm install react-signature-canvas
 npm install react-select
 npm install react-select react-select-async-paginate
 npm install laravel-echo pusher-js
+npm install react-window
+npm install --save-dev @types/react-window
+

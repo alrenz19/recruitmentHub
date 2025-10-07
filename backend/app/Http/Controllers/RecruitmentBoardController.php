@@ -177,26 +177,92 @@ class RecruitmentBoardController extends Controller
         $cacheDuration = 300; // 5 minutes
 
         $request->validate([
-            'refresh' => 'nullable|boolean'
+            'refresh'          => 'nullable|boolean',
+            'position'         => 'nullable|string',
+            'date_assessment'  => 'nullable|date',
+            'status'           => 'nullable|string',
+            'search'           => 'nullable|string',
         ]);
 
         $cacheVersion = Cache::get('candidates_cache_version', 1);
 
-        // Build cache key based on version and request parameters
-        $cacheKey = 'board_data_v' . $cacheVersion;
+        // Build cache key based on version + filters
+        $cacheKey = 'board_data_v' . $cacheVersion . '_' . md5(json_encode($request->all()));
 
         if ($request->boolean('refresh')) {
             Cache::forget($cacheKey);
         }
 
-        $board = Cache::remember($cacheKey, $cacheDuration, function () use ($perPage) {
+        $board = Cache::remember($cacheKey, $cacheDuration, function () use ($perPage, $request) {
+
             $boardResult = [];
 
             foreach ($this->stageIdMapping as $stageName => $stageId) {
-                $orderBySQL = $this->getStageOrderSQL($stageName, 'ap');
-                // Count total applicants for this stage
+                // --- Build dynamic WHERE filters ---
+                $bindings = [1, 0, $stageId, 0]; // common conditions
+                $filterSql = '';
+
+                if ($request->filled('position')) {
+                    $filterSql .= " AND c.position_desired LIKE ? ";
+                    $bindings[] = '%' . $request->position . '%';
+                }
+
+                if ($request->filled('date_assessment')) {
+                    $filterSql .= " AND DATE(ap.schedule_date) = ? ";
+                    $bindings[] = $request->date_assessment;
+                }
+
+                if ($request->filled('status')) {
+                    $filterSql .= " AND LOWER(ap.note) = ? ";
+                    $bindings[] = strtolower($request->status);
+                }
+
+                if ($request->filled('search')) {
+                    $filterSql .= " AND (c.full_name LIKE ? OR c.present_address LIKE ?) ";
+                    $bindings[] = '%' . $request->search . '%';
+                    $bindings[] = '%' . $request->search . '%';
+                }
+
+                // --- Total count for the stage ---
                 $totalResult = DB::selectOne("
                     SELECT COUNT(*) as total
+                    FROM applicants c
+                    INNER JOIN applicant_pipeline ap 
+                        ON c.id = ap.applicant_id
+                    WHERE c.in_active = ? 
+                    AND c.removed = ? 
+                    AND ap.current_stage_id = ? 
+                    AND ap.removed = ?
+                    $filterSql
+                ", $bindings);
+
+                $total = $totalResult ? (int) $totalResult->total : 0;
+
+                // --- Main query for applicants ---
+                // Order rules:
+                // 1) passed first
+                // 2) then pending
+                // 3) then rest, all alphabetical by position
+                $orderBySQL = "
+                    CASE 
+                        WHEN LOWER(ap.note) = 'passed' THEN 1
+                        WHEN LOWER(ap.note) = 'pending' THEN 2
+                        ELSE 3
+                    END ASC,
+                    c.position_desired ASC
+                ";
+
+                $rows = DB::select("
+                    SELECT 
+                        c.id,
+                        c.full_name,
+                        c.position_desired AS position,
+                        c.profile_picture AS avatar,
+                        c.present_address AS address,
+                        c.desired_salary AS salary,
+                        ap.id AS pipeline_id,
+                        ap.note AS pipeline_note,
+                        ap.schedule_date
                     FROM applicants c
                     INNER JOIN applicant_pipeline ap 
                         ON c.id = ap.applicant_id
@@ -204,32 +270,10 @@ class RecruitmentBoardController extends Controller
                     AND c.removed = ?
                     AND ap.current_stage_id = ?
                     AND ap.removed = ?
-                ", [1, 0, $stageId, 0]);
-
-                $total = $totalResult ? (int)$totalResult->total : 0;
-
-                // Fetch applicants for this stage
-                $rows = DB::select("
-                    SELECT 
-                        c.id,
-                        c.full_name,
-                        c.position_desired as position,
-                        c.profile_picture as avatar,
-                        c.present_address as address,
-                        c.desired_salary as salary,
-                        ap.id as pipeline_id,
-                        ap.note as pipeline_note,
-                        ap.schedule_date
-                    FROM applicants c
-                    INNER JOIN applicant_pipeline ap 
-                        ON c.id = ap.applicant_id
-                    WHERE c.in_active = ? 
-                    AND c.removed = ?
-                    AND ap.current_stage_id = ? 
-                    AND ap.removed = ?
-                    ORDER BY {$orderBySQL}
+                    $filterSql
+                    ORDER BY $orderBySQL
                     LIMIT ?
-                ", [1, 0, $stageId, 0, $perPage]);
+                ", array_merge($bindings, [$perPage]));
 
                 if (empty($rows)) {
                     $boardResult[$stageName] = [
@@ -239,111 +283,114 @@ class RecruitmentBoardController extends Controller
                     continue;
                 }
 
-                $applicantIds = [];
-                $pipelineIds = [];
-                foreach ($rows as $row) {
-                    $applicantIds[] = $row->id;
-                    $pipelineIds[] = $row->pipeline_id;
-                }
+                // --- Collect IDs for related queries ---
+                $applicantIds = array_column($rows, 'id');
+                $pipelineIds  = array_column($rows, 'pipeline_id');
 
-                // Fetch scores
-                $scoresByPipeline = [];
+                // ===============================
+                // Fetch Scores
+                // ===============================
                 $finalScores = [];
+                if (!empty($pipelineIds)) {
+                    $placeholders = implode(',', array_fill(0, count($pipelineIds), '?'));
+                    $bindings = array_merge($pipelineIds, [0, $this->scoreTypes[$stageName]]);
 
-            if (!empty($pipelineIds)) {
-                $placeholders = implode(',', array_fill(0, count($pipelineIds), '?'));
-                $bindings = array_merge($pipelineIds, [0, $this->scoreTypes[$stageName]]);
-                
-                $scoreRows = DB::select("
-                    SELECT 
-                        applicant_pipeline_id,
-                        type,
-                        raw_score,
-                        overall_score,
-                        CASE WHEN overall_score > 0 THEN (raw_score / overall_score) * 100 ELSE 0 END AS percentage
-                    FROM applicant_pipeline_score
-                    WHERE applicant_pipeline_id IN ($placeholders)
-                    AND removed = ?
-                    AND type = ?
-                ", $bindings);
+                    $scoreRows = DB::select("
+                        SELECT 
+                            applicant_pipeline_id,
+                            raw_score,
+                            overall_score,
+                            CASE WHEN overall_score > 0 
+                                THEN (raw_score / overall_score) * 100 
+                                ELSE 0 
+                            END AS percentage
+                        FROM applicant_pipeline_score
+                        WHERE applicant_pipeline_id IN ($placeholders)
+                        AND removed = ?
+                        AND type = ?
+                    ", $bindings);
 
-                foreach ($scoreRows as $s) {
-                    $pipelineId = $s->applicant_pipeline_id;
+                    $scoresByPipeline = [];
+                    $overallScoresByPipeline = [];
 
-                    if (!isset($scoresByPipeline[$pipelineId])) {
-                        $scoresByPipeline[$pipelineId] = [];
+                    foreach ($scoreRows as $s) {
+                        $scoresByPipeline[$s->applicant_pipeline_id][] = $s->raw_score;
+                        // track overall_score (they’re usually same for each interviewer, but we’ll take max)
+                        $overallScoresByPipeline[$s->applicant_pipeline_id] = $s->overall_score;
                     }
 
-                    $scoresByPipeline[$pipelineId][] = $s->raw_score; // just collect raw scores
-                }
+                    foreach ($scoresByPipeline as $pipelineId => $rawScores) {
+                        $numInterviewers = count($rawScores);
+                        $finalScore = 0;
 
-                // Calculate final score to sum to 100
-                foreach ($scoresByPipeline as $pipelineId => $rawScores) {
-                    $numInterviewers = count($rawScores);
-                    $finalScore = 0;
-
-                    if ($numInterviewers > 0) {
-                        $weight = 100 / $numInterviewers;
-                        foreach ($rawScores as $score) {
-                            $finalScore += ($score * $weight / 100);
+                        if ($numInterviewers > 0) {
+                            $weight = 100 / $numInterviewers;
+                            foreach ($rawScores as $score) {
+                                $finalScore += ($score * $weight / 100);
+                            }
                         }
-                    }
 
-                    $finalScores[$pipelineId][] = [
-                        'text'  => ucfirst(str_replace('_', ' ', $this->scoreTypes[$stageName])) . ':',
-                        'value' => round($finalScore, 2), // final weighted score
-                    ];
+                        $finalScores[$pipelineId][] = [
+                            'text'           => ucfirst(str_replace('_', ' ', $this->scoreTypes[$stageName])) . ':',
+                            'value'          => round($finalScore, 2),                               // weighted final score
+                            'overall_score'  => round($overallScoresByPipeline[$pipelineId], 2) ?? 0,         // add overall_score
+                        ];
+                    }
                 }
-            }
-                // Fetch notes
+
+                // ===============================
+                // Fetch Notes
+                // ===============================
                 $notesByApplicant = [];
                 if (!empty($applicantIds)) {
                     $placeholders = implode(',', array_fill(0, count($applicantIds), '?'));
-                    $bindingsArray = array_merge($applicantIds, [0]);
+                    $bindings = array_merge($applicantIds, [0]);
+
                     $noteRows = DB::select("
                         SELECT applicant_id, note
                         FROM recruitment_notes
                         WHERE applicant_id IN ($placeholders)
                         AND removed = ?
-                    ", $bindingsArray);
+                    ", $bindings);
 
                     foreach ($noteRows as $n) {
                         $notesByApplicant[$n->applicant_id][] = $n->note;
                     }
                 }
 
-                // Build cards
+                // ===============================
+                // Build Cards
+                // ===============================
                 $cards = [];
-
                 foreach ($rows as $row) {
                     $tags = [];
                     if ($row->pipeline_note) {
                         $status = strtolower($row->pipeline_note);
                         $variant = $this->statusVariants[$status] ?? 'gray';
                         $tags[] = [
-                            'text' => $status,
+                            'text'    => $status,
                             'variant' => $variant,
                         ];
                     }
 
                     $cards[] = [
-                        'id' => $row->id,
-                        'pipeline_id'=> $row->pipeline_id,
-                        'name' => $row->full_name ?? '',
-                        'position' => $row->position ?? '',
-                        'avatar' => (!empty($row->avatar) && $row->avatar !== '/')  ? url('storage/' . $row->avatar) : '',
-                        'address' => $row->address ?? '',
-                        'salary' => $row->salary ?? '',
-                        'notes' => $notesByApplicant[$row->id] ?? [],
-                        'progress' => $finalScores[$row->pipeline_id] ?? [],
-                        'tags' => $tags,
-                        'date' => $row->schedule_date ?? '',
+                        'id'          => $row->id,
+                        'pipeline_id' => $row->pipeline_id,
+                        'name'        => $row->full_name ?? '',
+                        'position'    => $row->position ?? '',
+                        'avatar'      => (!empty($row->avatar) && $row->avatar !== '/') ? url('storage/' . $row->avatar) : '',
+                        'address'     => $row->address ?? '',
+                        'salary'      => $row->salary ?? '',
+                        'notes'       => $notesByApplicant[$row->id] ?? [],
+                        'progress'    => $finalScores[$row->pipeline_id] ?? [],
+                        'tags'        => $tags,
+                        'date'        => $row->schedule_date ?? '',
                     ];
                 }
 
                 $boardResult[$stageName] = [
                     'totalCard' => $total,
-                    'cards' => $cards
+                    'cards'     => $cards
                 ];
             }
 
@@ -353,7 +400,8 @@ class RecruitmentBoardController extends Controller
         return response()->json($board);
     }
 
-    public function getApplicantDetails($applicantId)
+
+       public function getApplicantDetails($applicantId)
     {
         $creatorUserId = auth()->id();
 
@@ -379,7 +427,7 @@ class RecruitmentBoardController extends Controller
                         DISTINCT JSON_OBJECT(
                             'title', IFNULL(ass.title, ''),
                             'score', IFNULL(ar.score, 0),
-                            'over_all_score', IFNULL(aq_counts.total_questions, 0)
+                            'over_all_score', IFNULL(aq_counts.correct_answers, 0)
                         )
                     SEPARATOR ','), ']'),
                     '[]'
@@ -395,16 +443,6 @@ class RecruitmentBoardController extends Controller
                     SEPARATOR ','), ']'),
                     '[]'
                 ) AS schedules,
-                IFNULL(
-                    (SELECT aps.raw_score
-                    FROM applicant_pipeline_score aps
-                    WHERE aps.applicant_pipeline_id = ap.id
-                    AND aps.interviewer_id = ?
-                    AND aps.type = LOWER(REPLACE(rs.stage_name, ' ', '_')) COLLATE utf8mb4_general_ci
-                    AND aps.removed = 0
-                    LIMIT 1),
-                    ''
-                ) AS my_input_score,
                 IFNULL(
                     (SELECT 1 
                     FROM job_offers jo 
@@ -447,10 +485,13 @@ class RecruitmentBoardController extends Controller
             LEFT JOIN assessments ass
                 ON ass.id = ar.assessment_id AND ass.removed = 0
             LEFT JOIN (
-                SELECT assessment_id, COUNT(*) AS total_questions
-                FROM assessment_questions
-                WHERE removed = 0
-                GROUP BY assessment_id
+                SELECT aq.assessment_id, COUNT(*) AS correct_answers
+                FROM assessment_questions aq
+                INNER JOIN assessment_options ao ON aq.id = ao.question_id
+                WHERE aq.removed = 0 
+                AND ao.removed = 0
+                AND ao.is_correct = 1
+                GROUP BY aq.assessment_id
             ) aq_counts ON aq_counts.assessment_id = ass.id
             LEFT JOIN applicant_pipeline ap
                 ON ap.applicant_id = a.id AND ap.removed = 0
@@ -464,7 +505,7 @@ class RecruitmentBoardController extends Controller
             ) pt ON pt.applicant_pipeline_id = ap.id
             WHERE a.id = ?
             GROUP BY a.id, ap.id, rs.stage_name
-        ", [$hrStaffId, $applicantId]);
+        ", [$applicantId]);
 
         // Decode files JSON
         $files = json_decode($row->files, true);
@@ -481,7 +522,6 @@ class RecruitmentBoardController extends Controller
             'files' => $files,
             'assessments' => json_decode($row->assessments, true),
             'schedules' => json_decode($row->schedules, true),
-            'input_score' => $row->my_input_score,
             'has_job_offer' => (bool)$row->has_job_offer,
             'job_offer_status' => $row->job_offer_status,
         ]);
@@ -554,5 +594,66 @@ class RecruitmentBoardController extends Controller
             'admin_signature'     => $adminSig ? asset('storage/' . $adminSig) : null,
         ]);
     }
+
+
+    public function getStatuses(Request $request)
+    {
+        $perPage = $request->get('per_page', 10);
+        $page = $request->get('page', 1);
+        $offset = ($page - 1) * $perPage;
+
+        // Get total count
+        $totalResult = DB::selectOne("
+            SELECT COUNT(DISTINCT note) as total
+            FROM applicant_pipeline
+            WHERE removed = 0
+        ");
+        $total = $totalResult->total ?? 0;
+
+        // Get paginated distinct statuses
+        $statusRows = DB::select("
+            SELECT DISTINCT note
+            FROM applicant_pipeline 
+            WHERE removed = 0
+            ORDER BY note
+            LIMIT ? OFFSET ?
+        ", [$perPage, $offset]);
+
+        // Extract just the note values
+        $statuses = array_map(function($row) {
+            return $row->note;
+        }, $statusRows);
+
+        return response()->json([
+            'data' => $statuses,
+            'hasMore' => ($page * $perPage) < $total,
+        ]);
+    }
+
+
+    public function getRoles(Request $request)
+    {
+        $perPage = $request->get('per_page', 10);
+        $page = $request->get('page', 1);
+        $offset = ($page - 1) * $perPage;
+
+        // Get total count
+        $totalResult = DB::selectOne("SELECT COUNT(*) as total FROM positions");
+        $total = $totalResult->total ?? 0;
+
+        // Get paginated roles
+        $roles = DB::select("
+            SELECT id, title
+            FROM positions
+            ORDER BY title
+            LIMIT ? OFFSET ?
+        ", [$perPage, $offset]);
+
+        return response()->json([
+            'data' => $roles,
+            'hasMore' => ($page * $perPage) < $total,
+        ]);
+    }
+
 
 }

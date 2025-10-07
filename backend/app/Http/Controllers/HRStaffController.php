@@ -6,7 +6,10 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
 
+
 use App\Mail\HRStaffCreated;
+use App\Events\HRStaffListUpdated;
+use App\Models\HRStaff;
 
 
 class HRStaffController extends Controller
@@ -142,14 +145,14 @@ class HRStaffController extends Controller
         try {
             DB::beginTransaction();
 
-            // ✅ First get user_id linked to hr_staff
+            // First get user_id linked to hr_staff
             $staff = DB::selectOne("SELECT user_id FROM hr_staff WHERE id = ?", [$id]);
             if (!$staff) {
                 return response()->json(['error' => 'HR Staff not found'], 404);
             }
             $userId = $staff->user_id;
 
-            // ✅ Update users table
+            //  Update users table
             if (!empty($validated['password_hash'])) {
                 $hashed = bcrypt($validated['password_hash'], ['rounds' => 10]);
                 DB::update("
@@ -253,5 +256,13 @@ class HRStaffController extends Controller
         return response()->json($results);
     }
 
+    public function broadcastStaffList()
+    {
+        $staff = HRStaff::select('id', 'full_name')->get();
+
+        broadcast(new HRStaffListUpdated($staff));
+
+        return response()->json(['message' => 'Staff list broadcasted.']);
+    }
 
 }

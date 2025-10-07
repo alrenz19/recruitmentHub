@@ -11,6 +11,10 @@ Broadcast::channel('hr.notifications', function ($user) {
     return false;
 });
 
+Broadcast::channel('hr.staff-list', function ($user) {
+    return $user->role_id === [2, 3]; // allow only HR role to subscribe
+});
+
 // Applicant notifications channel
 Broadcast::channel('applicant.notifications', function ($user) {
     // Only applicants can access applicant notifications

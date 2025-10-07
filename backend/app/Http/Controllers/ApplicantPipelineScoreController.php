@@ -63,7 +63,7 @@ class ApplicantPipelineScoreController extends Controller
             ->where('type', $data['type'])
             ->update(['overall_score' => $overallScore]);
 
-        // 🚀 Invalidate board cache by bumping version
+        //  Invalidate board cache by bumping version
         Cache::increment('candidates_cache_version');
         $cacheVersion = Cache::get('candidates_cache_version', 1);
         // Build cache key based on version and request parameters
