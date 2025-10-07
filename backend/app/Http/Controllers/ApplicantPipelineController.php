@@ -297,7 +297,7 @@ class ApplicantPipelineController extends Controller
                         $decision,
                         $validated['comments'] ?? null,
                         $now,
-                        $now
+                        $now //61 59 58
                     ]
                 );
 

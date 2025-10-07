@@ -17,6 +17,7 @@ use App\Models\User;
 use App\Models\ApplicantAssessment;
 use App\Models\ApplicantPipeline;
 use App\Mail\CandidateAccountMail;
+use App\Mail\CandidateUpdateMail;
 
 //Jobs
 use App\Jobs\ProcessAssessmentsJob;
