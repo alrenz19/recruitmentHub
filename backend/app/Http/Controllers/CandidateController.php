@@ -415,8 +415,7 @@ class CandidateController extends Controller
         if (!empty($changes)) {
             $candidateName = $request->fullName ?? $originalData['full_name'] ?? 'Unknown Candidate';
             
-            Mail::to('hr@yourcompany.com') // Change to appropriate email
-                ->cc(['recruitment@yourcompany.com']) // Add CC recipients as needed
+            Mail::to($originalCandidate->email) // Change to appropriate email
                 ->queue(new CandidateUpdateMail(
                     $candidateName,
                     $updaterName,

@@ -28,12 +28,31 @@ use App\Http\Controllers\ApproverJobOfferController;
 use App\Http\Controllers\ApproverBoardController;
 use App\Http\Controllers\ApproverSettingsController;
 use App\Http\Controllers\ApplicantPipelineController;
+use App\Http\Controllers\PasswordResetController;
 
 // -------------------------------
 // Public routes (No CSRF protection needed)
 // -------------------------------
-Route::post('/login', [AuthController::class, 'login']);
+
+Route::post('/verify-credentials', [AuthController::class, 'verifyCredentials']);
+Route::post('/verify-otp-login', [AuthController::class, 'verifyOtpAndLogin']);
+Route::post('/resend-otp', [AuthController::class, 'resendOtp']);
+Route::post('/check-otp-status', [AuthController::class, 'checkOtpStatus']);
 Route::post('/logout', [AuthController::class, 'logout']);
+
+// Route::post('/login', [AuthController::class, 'login']);
+    // Reset Token
+Route::post('/forgot-password', [PasswordResetController::class, 'forgotPassword']);
+Route::post('/validate-reset-token', [PasswordResetController::class, 'validateResetToken']);
+Route::post('/reset-password', [PasswordResetController::class, 'resetPassword']);
+
+Route::get('sessions', [AuthController::class, 'getActiveSessions'])->middleware('auth:sanctum');
+Route::delete('sessions/{tokenId}', [AuthController::class, 'revokeSession'])->middleware('auth:sanctum');
+
+// Admin routes
+Route::post('force-logout/{userId}', [AuthController::class, 'forceLogoutUser'])->middleware('auth:sanctum');
+Route::post('cleanup-tokens', [AuthController::class, 'cleanupExpiredTokens'])->middleware('auth:sanctum');
+
 // Route::middleware(['web'])->group(function () {
 // });
 
@@ -61,6 +80,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/chat/applicant-history/', [ChatController::class, 'ApplicantChatHistory']);
     Route::post('/chat/applicant-send', [ChatController::class, 'ApplicantChatSend']);
     Route::get('/chat/notification', [ChatController::class, 'getUnreadCount']);
+
 });
 
 // Authentication check

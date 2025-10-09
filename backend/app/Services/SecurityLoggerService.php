@@ -233,4 +233,15 @@ class SecurityLoggerService
         
         return SecurityLog::where('created_at', '<', $cutoffDate)->delete();
     }
+
+    public static function logOtpEvent(string $action, bool $success, array $details = []): void
+    {
+        self::logSecurityEvent("OTP {$action}", [
+            'success' => $success,
+            'email' => $details['email'] ?? null,
+            'user_id' => $details['user_id'] ?? null,
+            'otp_id' => $details['otp_id'] ?? null,
+            'reason' => $details['reason'] ?? null,
+        ]);
+    }
 }

@@ -8,6 +8,7 @@ use Illuminate\Support\Facades\Mail;
 
 
 use App\Mail\HRStaffCreated;
+use App\Mail\StaffUpdateMail;
 use App\Events\HRStaffListUpdated;
 use App\Models\HRStaff;
 
@@ -145,14 +146,53 @@ class HRStaffController extends Controller
         try {
             DB::beginTransaction();
 
-            // First get user_id linked to hr_staff
-            $staff = DB::selectOne("SELECT user_id FROM hr_staff WHERE id = ?", [$id]);
+            // First get user_id linked to hr_staff and original data
+            $staff = DB::selectOne("
+                SELECT hs.*, u.user_email as current_email, u.role_id as current_role_id 
+                FROM hr_staff hs 
+                JOIN users u ON hs.user_id = u.id 
+                WHERE hs.id = ?
+            ", [$id]);
+            
             if (!$staff) {
                 return response()->json(['error' => 'HR Staff not found'], 404);
             }
+            
             $userId = $staff->user_id;
+            $updaterName = auth()->user()->name ?? 'System Administrator';
+            $changes = [];
 
-            //  Update users table
+            // Track changes for users table
+            if ($staff->current_email !== $validated['user_email']) {
+                $changes['email'] = $validated['user_email'];
+            }
+            
+            if ($staff->current_role_id != $validated['role_id']) {
+                $changes['role'] = $this->getRoleName($validated['role_id']);
+            }
+            
+            if (!empty($validated['password_hash'])) {
+                $changes['password'] = 'updated';
+            }
+
+            // Track changes for hr_staff table
+            if ($staff->full_name !== $validated['full_name']) {
+                $changes['full_name'] = $validated['full_name'];
+            }
+            
+            if ($staff->position !== $validated['position']) {
+                $changes['position'] = $validated['position'];
+            }
+            
+            if ($staff->department !== $validated['department']) {
+                $changes['department'] = $validated['department'];
+            }
+            
+            if ($staff->contact_email !== $validated['contact_email']) {
+                $changes['contact_email'] = $validated['contact_email'];
+            }
+
+            // 1️⃣ Update users table
             if (!empty($validated['password_hash'])) {
                 $hashed = bcrypt($validated['password_hash'], ['rounds' => 10]);
                 DB::update("
@@ -177,7 +217,7 @@ class HRStaffController extends Controller
                 ]);
             }
 
-            // ✅ Update hr_staff table
+            // 2️⃣ Update hr_staff table
             DB::update("
                 UPDATE hr_staff
                 SET full_name = ?, position = ?, department = ?, contact_email = ?, updated_at = NOW()
@@ -190,18 +230,48 @@ class HRStaffController extends Controller
                 $id
             ]);
 
+            // 3️⃣ Send email notification if there were changes
+            if (!empty($changes)) {
+                Mail::to($staff->contact_email)
+                    ->queue(new StaffUpdateMail(
+                        $validated['full_name'],
+                        $updaterName,
+                        $changes,
+                        now()->format('F j, Y g:i A'),
+                        $validated['position'],
+                        $validated['department']
+                    ));
+            }
             DB::commit();
+
 
             return response()->json([
                 'message' => 'HR Staff updated successfully.',
                 'staff_id' => $id,
                 'user_id'  => $userId,
+                'changes'  => $changes // Optional: return changes for frontend
             ]);
 
         } catch (\Exception $e) {
             DB::rollBack();
             return response()->json(['error' => $e->getMessage()], 500);
         }
+    }
+
+    /**
+     * Helper function to get role name
+     */
+    private function getRoleName($roleId)
+    {
+        $roles = [
+            1 => 'Administrator',
+            2 => 'Manager', 
+            3 => 'Supervisor',
+            4 => 'Staff',
+            5 => 'Viewer'
+        ];
+        
+        return $roles[$roleId] ?? "Role {$roleId}";
     }
 
     public function destroy($id)

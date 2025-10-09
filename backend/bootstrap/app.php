@@ -28,7 +28,7 @@ return Application::configure(basePath: dirname(__DIR__))
             'throttle:api',
             \Illuminate\Routing\Middleware\SubstituteBindings::class,
             \Illuminate\Http\Middleware\HandleCors::class,
-            \App\Http\Middleware\EncryptSensitiveData::class,
+            //\App\Http\Middleware\EncryptDatabaseData::class,
         ]);
 
         // Middleware aliases

@@ -103,6 +103,13 @@ public function getProfile()
             );
         }
 
+        // Log profile update
+        SecurityLoggerService::log('profile_updated', "User profile updated", [
+            'user_id' => $user->id,
+            'user_email' => $user->user_email,
+            'updated_fields' => array_keys($updateData)
+        ]);
+
 
         return response()->json(['message' => 'Profile updated successfully']);
     }
@@ -142,6 +149,12 @@ public function getProfile()
 
         $user->password_hash = Hash::make($request->new_password);
         $user->save();
+        
+        SecurityLoggerService::log('password_changed', "User changed password", [
+            'user_id' => $user->id,
+            'user_email' => $user->user_email,
+        ]);
+
 
         return response()->json(['message' => 'Password updated successfully']);
     }

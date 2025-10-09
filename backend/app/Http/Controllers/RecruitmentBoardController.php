@@ -527,8 +527,6 @@ class RecruitmentBoardController extends Controller
         ]);
     }
 
-
-
     public function updateStatus(Request $request, $id)
     {
         $creator = auth()->id(); 
@@ -544,7 +542,7 @@ class RecruitmentBoardController extends Controller
             WHERE applicant_id = ? AND removed = 0
         ", [$creator, $request->note, $id]);
 
-        NotificationService::send($creator, "Application Status Updated", 'congratulations! 🎉 You’re qualify to the next step of the application process.', 'general', '/dashboard');
+        NotificationService::send($id, "Application Status Updated", 'congratulations! 🎉 You’re qualify to the next step of the application process.', 'general', '/dashboard');
 
         // 🚀 Invalidate board cache by bumping version
         Cache::increment('candidates_cache_version');

@@ -21,7 +21,7 @@
         </div>
         
         <div class="content">
-            <p>Hello Team,</p>
+            <p>Hello {{ $candidateName }},</p>
             
             <p>The following candidate information has been updated:</p>
             
@@ -47,7 +47,7 @@
             </div>
             @endif
             
-            <p>Please log in to the system to view the complete candidate details.</p>
+            <p>Please log in to the system to view the complete details.</p>
         </div>
         
         <div class="footer">

@@ -28,9 +28,9 @@ class NotificationController extends Controller
                     ELSE DATE_FORMAT(created_at, '%Y-%m-%d %H:%i')
                 END AS time
             FROM notifications
-            WHERE user_id = ? AND is_read = 0 AND removed = 0
+            WHERE target_role = ? AND is_read = 0 AND removed = 0
             ORDER BY created_at DESC
-        ", [$userId]);
+        ", ['hr']);
 
         // Read notifications (limit 5)
         $read = DB::select("
@@ -46,10 +46,10 @@ class NotificationController extends Controller
                     ELSE DATE_FORMAT(created_at, '%Y-%m-%d %H:%i')
                 END AS time
             FROM notifications
-            WHERE user_id = ? AND is_read = 1 AND removed = 0
+            WHERE target_role = ? AND is_read = 1 AND removed = 0
             ORDER BY created_at DESC
             LIMIT 5
-        ", [$userId]);
+        ", ['hr']);
 
         return response()->json([
             [
